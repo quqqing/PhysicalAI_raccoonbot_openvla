@@ -1,5 +1,7 @@
 # Raccoonbot_Openvla
 
+⭐ 1~3번은 직접 finetuning을 진행하는 내용이니 체크포인트를 불러와서 사용하는 경우 0번과 4번만 진행<br>
+
 0~3번 server에서 실행, 4번 local-server 실행<br>
 
 
@@ -9,11 +11,16 @@ git clone https://github.com/KWU-FAIR-LAB/Raccoonbot_Openvla.git
 ```
 
 ```
+cd Raccoonbot_Openvla
+
 pip install -r requirments.txt
 ```
 
 ## 1. Dataset 생성
-
+MuJoCo 가상환경에서 finetuning을 위한 데이터를 수집
+```
+python raccoon_grasp_multicolor_scene_dataset.py
+```
 
 ## 2. rlds 파일 변환
 raw data를 rlds builder에 맞게 변경
@@ -62,7 +69,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
 ```
 
 ## 4. Mujoco 환경 Inference (local-server)
-
+1~3번을 진행했다면 4-1은 건너뛰고 이후 명령어에서 본인이 finetuning한 모델 경로로 modelpath를 변경하여 진행
 
 ## 4-1. Hugging Face에서 RaccoonBot finetuned OpenVLA 모델 다운로드
 서버에서 terminal에 아래 명령어를 입력하여 모델 다운로드
@@ -78,7 +85,7 @@ server 실행 명령문
 cd /data/Mujoco/openvla
 CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
   --model_path /data/openvla-runs/openvla-7b-finetuned-raccoonbot \
-  --default-unnorm-key raccoon_grasp \
+  --default-unnorm-key raccoon_pick_place \
   --host 0.0.0.0 \
   --port 8000 \
   --device cuda
