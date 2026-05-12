@@ -2,6 +2,8 @@
 
 0~3번 server에서 실행, 4번 local-server 실행<br>
 
+⭐ 파일경로 내 **[physicalai_workspace]** 폴더명 수정 필요
+
 
 ## 0. Dependencies
 ```
@@ -13,7 +15,7 @@ pip install -r requirments.txt
 
 ## 2. rlds 파일 변환
 raw data를 rlds builder에 맞게 변경
-아래 명렁문 그대로 실행
+아래 명령문 그대로 실행
 ```
 cd /data/physicalai_workspace/Mujoco/raccoon_dataset
 python convert_raw_to_openvla_rlds_intermediate.py \
@@ -24,7 +26,7 @@ python convert_raw_to_openvla_rlds_intermediate.py \
 
 ## 2-1. rlds builder
 rlds builder 실행
-아래 명렁문 그대로 실행
+아래 명령문 그대로 실행
 ```
 cd /data/physicalai_workspace/Mujoco/rlds_dataset_builder/raccoon_grasp
 tfds build --overwrite
@@ -36,7 +38,7 @@ mv /root/tensorflow_datasets /data/physicalai_workspace/Mujoco/
 
 ## 3. Raccoonbot 기반 OpenVLA finetuning
 아래 명령어 그대로 실행 <br>
-(max_steps, save_steps 수정 가능)
+(max_steps, save_steps 변경 가능)
 ```
 cd /data/physicalai_workspace/Mujoco/openvla
 export PYTHONPATH=/data/physicalai_workspace/Mujoco/openvla:$PYTHONPATH
@@ -58,9 +60,17 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
 ```
 
 ## 4. Mujoco 환경 Inference (local-server)
-[local 실행 코드] (구글드라이브링크) download <br>
+클라이언트측 코드와 MuJoCo xml 파일 [다운로드](https://drive.google.com/drive/folders/1xrH3FoTfKC9CiUE-kDRorxTKMMq0O7Px?usp=sharing) 후 압축 풀기 <br>
+파일: openvla_multicolor_client.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml
 
-server 실행 명령문 (수정 필요)
+
+target_color를 **[red, blue, green, yellow]** 로 수정하면 그에 맞게 prompt가 변경됨 <br>
+⭐ local 실행 명령문
+```
+python openvla_multicolor_client.py --server_url http://127.0.0.1:8000 --xml_path Raccoon_colored_cylinder.xml --target_color red --use_viewer
+```
+
+⭐ server 실행 명령문 (수정 필요)
 ```
 cd /data/physicalai_workspace/Mujoco/openvla
 CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
@@ -70,4 +80,5 @@ CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
   --port 8000 \
   --device cuda
 ```
+
 
