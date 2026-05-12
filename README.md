@@ -64,15 +64,6 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
 ```
 
 ## 4. Mujoco 환경 Inference (local-server)
-클라이언트측 코드와 MuJoCo xml 파일 [다운로드](https://drive.google.com/drive/folders/1xrH3FoTfKC9CiUE-kDRorxTKMMq0O7Px?usp=sharing) 후 압축 풀기 <br>
-파일: openvla_multicolor_client.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml
-
-
-target_color를 **[red, blue, green, yellow]** 로 수정하면 그에 맞게 prompt가 변경됨 <br>
-⭐ local 실행 명령문
-```
-python openvla_multicolor_client.py --server_url http://127.0.0.1:8000 --xml_path Raccoon_colored_cylinder.xml --target_color red --use_viewer
-```
 
 
 ## 4-1. Hugging Face에서 RaccoonBot finetuned OpenVLA 모델 다운로드
@@ -83,15 +74,32 @@ pip install -U huggingface_hub
 hf download fair-lab/openvla-7b-finetuned-raccoonbot --local-dir ./openvla-runs/openvla-7b-finetuned-raccoonbot
 ```
 
-⭐ server 실행 명령문 (수정 필요)
+## 4-2. 서버측 코드 실행
+server 실행 명령문
 ```
 cd /data/physicalai_workspace/Mujoco/openvla
 CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
-  --model_path /data/physicalai_workspace/openvla-runs/openvla-7b-finetuned-raccoonbot \
+  --model_path /data/openvla-runs/openvla-7b-finetuned-raccoonbot \
   --default-unnorm-key raccoon_grasp \
   --host 0.0.0.0 \
   --port 8000 \
   --device cuda
+```
+
+## 4-3. 클라이언트측에서 실행할 환경 설정
+클라이언트측 코드와 MuJoCo xml 파일 [다운로드](https://drive.google.com/drive/folders/1xrH3FoTfKC9CiUE-kDRorxTKMMq0O7Px?usp=sharing) 후 압축 풀기 <br>
+파일: openvla_multicolor_client.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml, requirements.txt
+
+VSCode로 압축 풀은 상위 폴더를 열고 terminal에서 환경설정
+```
+pip install -r requirments.txt
+```
+
+## 4-4. 클라이언트측 코드 실행
+target_color를 **[red, blue, green, yellow]** 로 수정하면 그에 맞게 prompt가 변경됨 <br>
+⭐ local 실행 명령문
+```
+python openvla_multicolor_client.py --server_url http://127.0.0.1:8000 --xml_path Raccoon_colored_cylinder.xml --target_color red --use_viewer
 ```
 
 
