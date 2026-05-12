@@ -88,7 +88,7 @@ CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
 
 ## 4-3. 클라이언트측에서 실행할 환경 설정
 클라이언트측 코드와 MuJoCo xml 파일 [다운로드](https://drive.google.com/drive/folders/1xrH3FoTfKC9CiUE-kDRorxTKMMq0O7Px?usp=sharing) 후 압축 풀기 <br>
-파일: openvla_multicolor_client.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml, requirements.txt
+파일: openvla_multicolor_client.py, raccoon_env.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml, requirements.txt
 
 VSCode로 압축 풀은 상위 폴더를 열고 terminal에서 환경설정
 ```
