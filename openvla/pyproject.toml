@@ -56,7 +56,9 @@ dependencies = [
     "tensorflow==2.13.1",
     "tensorflow_datasets==4.9.2",
     "tensorflow_graphics==2021.12.3",
-    "dlimp @ file:///data/Raccoonbot_Openvla/dlimp_openvla"
+    "dlimp @ file:///data/Raccoonbot_Openvla/dlimp_openvla",
+    "fastapi",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
