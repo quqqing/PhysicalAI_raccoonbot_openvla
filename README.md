@@ -29,7 +29,8 @@ pip install .
 ```
 
 ## 1. Dataset 생성
-MuJoCo 가상환경에서 finetuning을 위한 데이터를 수집
+MuJoCo 가상환경에서 finetuning을 위한 데이터를 수집 <br>
+(main 함수에서 변수 num_episodes으로 dataset sample 수 변경 가능)
 ```
 cd /data/Raccoonbot_Openvla/Mujoco
 python raccoon_grasp_multicolor_scene_dataset.py
