@@ -95,7 +95,8 @@ hf download fair-lab/openvla-7b-finetuned-raccoonbot --local-dir /data/Raccoonbo
 ``` 
 
 ## 4-2. 서버측 코드 실행
-server 실행 명령문
+server 실행 명령문<br>
+만약 1~3번을 진행하여 직접 finetuning했다면 model path를 openvla-runs/ 아래에 있는 모델 디렉토리로 변경하고 진행<br>
 ```
 cd /data/Raccoonbot_Openvla/openvla
 CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
