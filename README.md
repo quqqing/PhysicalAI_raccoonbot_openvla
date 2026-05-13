@@ -10,10 +10,11 @@
 git clone https://github.com/KWU-FAIR-LAB/Raccoonbot_Openvla.git
 ```
 
+필요한 패키지 설치
 ```
-cd Raccoonbot_Openvla
+cd Raccoonbot_Openvla/openvla
 
-pip install -r requirments.txt
+pip install -e .
 ```
 
 ## 1. Dataset 생성
