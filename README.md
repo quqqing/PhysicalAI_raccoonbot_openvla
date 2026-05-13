@@ -35,6 +35,7 @@ MuJoCo 가상환경에서 finetuning을 위한 데이터를 수집 <br>
 cd /data/Raccoonbot_Openvla/Mujoco
 python raccoon_grasp_multicolor_scene_dataset.py
 ```
+실행하면 /data/Raccoonbot_Openvla/Mujoco/raccoon_grasp_colored_cylinder 하위에 episode별로 dataset png 확인 가능
 
 ## 2. rlds 파일 변환
 raw data를 rlds builder에 맞게 변경
