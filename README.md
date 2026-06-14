@@ -319,11 +319,11 @@ python openvla_multicolor_client.py \
 
 최종 결과 동영상 <br>
 grasp
-https://youtu.be/VRco3zu8wKQ
+https://youtu.be/VRco3zu8wKQ <br>
 lift
-https://youtu.be/OsBT8e6ZamM
+https://youtu.be/OsBT8e6ZamM <br>
 pick and place
-https://youtu.be/01SmwYhltB4
+https://youtu.be/01SmwYhltB4 <br>
 
 ### 최종 데이터셋 확장 목록<br>
 1. 새 객체 추가 : white cube<br>
