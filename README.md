@@ -3,21 +3,28 @@
 기본 베이스는 https://github.com/KWU-FAIR-LAB/Raccoonbot_Openvla.git 를 참고하여 환경설정 진행함.
 
 기본 베이스 라인
+
   물체 : 색깔 원통 4개
+  
   task : grasp
+  
   언어 명령 : grasp the {color} cylinder
+  
   action : dx, dy, dz, gripper
 
 확장 버전
   물체 : 색깔 원통 4개 + 2cm x 2cm 의 흰색 정육면체 1개
+  
   task : grasp, lift, pick and place
+  
   언어 명령 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four
+  
   action : dx, dy, dz, dpitch, gripper
 
 ## 추가 기능 구현 목록 정리
 
 ### Grasp 데이터
-처음에 pitch를 포함하여 grasp을 시토할 때 발생한 문제들
+처음에 pitch를 포함하여 grasp을 시도할 때 발생한 문제들
   1. 다른 물체와의 접촉을 방지하기 위해 물체 접근 시 pitch 각을 90도로 설정하여 지면과 수직이 되도록 설정함
      <img width="342" height="318" alt="image" src="https://github.com/user-attachments/assets/28a70938-9d64-4d7f-b534-69a7f4029eb3" />
   
