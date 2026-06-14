@@ -317,9 +317,41 @@ python openvla_multicolor_client.py \
   --max_steps 500
 ```
 
-최종 결과 동영상 
+최종 결과 동영상 <br>
 
 ### 최종 데이터셋 확장 목록
 1. 새 객체 추가 : white cube
 2. 새 task 추가 : lift, pick and place
 3. 언어 instruction 다양화 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four
+
+**Visualize one episode**<br>
+grasp
+<img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/f043ba9c-b45f-4083-853f-6f615dbe6f42" />
+<img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/21470747-109c-4170-b4e7-229392ca9b7e" />
+<img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/4ba1a35f-e7b9-42c4-8262-31ead9d3e81d" />
+<img width="256" height="256" alt="frame_000030" src="https://github.com/user-attachments/assets/329a4af3-4f10-4a6d-b8e6-b6c4ecb4efbf" />
+<img width="256" height="256" alt="frame_000033" src="https://github.com/user-attachments/assets/8d550ef8-d527-4fea-8ca6-33c445134093" />
+
+lift
+<img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/0373694b-75b5-4597-8048-85dad1f1eab4" />
+<img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/9a46cb85-a2fe-4f88-a3b6-36bd4ae888b4" />
+<img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/eff1be54-da36-4f22-b802-3f6db0179000" />
+<img width="256" height="256" alt="frame_000030" src="https://github.com/user-attachments/assets/5ba80738-f928-475b-af57-b23c15328c9c" />
+<img width="256" height="256" alt="frame_000040" src="https://github.com/user-attachments/assets/0fa8e241-c2ae-4a8e-9fde-01c400ee3221" />
+<img width="256" height="256" alt="frame_000048" src="https://github.com/user-attachments/assets/95691486-55d8-4c6f-8759-cce3529175e7" />
+
+pick and place
+<img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/487cba4e-153c-48a8-aa9e-9afd30ab2148" />
+<img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/a56aa6dc-3fc3-4cf0-bfda-d091ebc95185" />
+<img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/f0fa8082-8e31-4266-a818-3cbc270cf693" />
+<img width="256" height="256" alt="frame_000030" src="https://github.com/user-attachments/assets/54ab7949-4e50-4499-8c79-177735df4d0e" />
+<img width="256" height="256" alt="frame_000040" src="https://github.com/user-attachments/assets/a6ce8ada-c7e3-49f2-b636-a5888937bc5e" />
+<img width="256" height="256" alt="frame_000050" src="https://github.com/user-attachments/assets/c5f62184-317b-4d7d-b0c9-1cd8555f5d4c" />
+<img width="256" height="256" alt="frame_000060" src="https://github.com/user-attachments/assets/390e9879-0528-422d-92d5-8a582ac02e20" />
+<img width="256" height="256" alt="frame_000070" src="https://github.com/user-attachments/assets/4e5beb1a-6173-43e8-a2ff-cf9aa3af488d" />
+<img width="256" height="256" alt="frame_000080" src="https://github.com/user-attachments/assets/9884d195-1131-4c0b-920d-e11c630c4e23" />
+<img width="256" height="256" alt="frame_000090" src="https://github.com/user-attachments/assets/50a1defb-fbe2-4789-a609-d83866b4f248" />
+<img width="256" height="256" alt="frame_000090" src="https://github.com/user-attachments/assets/99db2045-1123-4aa1-a799-f8eb46d36381" />
+<img width="256" height="256" alt="frame_000110" src="https://github.com/user-attachments/assets/29cf7d70-d47a-445c-a9f0-8ad4a799eb34" />
+
+
