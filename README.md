@@ -325,10 +325,10 @@ https://youtu.be/OsBT8e6ZamM <br>
 pick and place
 https://youtu.be/01SmwYhltB4 <br>
 
-### 최종 데이터셋 확장 목록<br>
-1. 새 객체 추가 : white cube<br>
-2. 새 task 추가 : lift, pick and place<br>
-3. 언어 instruction 다양화 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four<br>
+## 최종 데이터셋 확장 목록<br>
+1. **새 객체 추가** : white cube<br>
+2. **새 task 추가** : lift, pick and place<br>
+3. **언어 instruction 다양화** : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four<br>
 
 **Visualize one episode**<br>
 grasp<br>
@@ -359,5 +359,14 @@ pick and place<br>
 <img width="256" height="256" alt="frame_000090" src="https://github.com/user-attachments/assets/50a1defb-fbe2-4789-a609-d83866b4f248" />
 <img width="256" height="256" alt="frame_000100" src="https://github.com/user-attachments/assets/76aee96e-87c5-462a-9b86-7ef70f5a8072" />
 <img width="256" height="256" alt="frame_000110" src="https://github.com/user-attachments/assets/29cf7d70-d47a-445c-a9f0-8ad4a799eb34" />
+
+
+
+## 코드 개선
+### 7D-to-4DOF action mapping 개선
+### inference 또는 motion execution 속도 개선
+inference시 속도를 개선하기 
+
+### timing/action log 추가 또는 visualization 개선
 
 
