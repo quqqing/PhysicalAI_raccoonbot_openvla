@@ -1,133 +1,71 @@
 # Raccoonbot_Openvla
 
-⭐ 1~3번은 직접 finetuning을 진행하는 내용이니 체크포인트를 불러와서 사용하는 경우 0번과 4번만 진행<br>
+기본 베이스는 https://github.com/KWU-FAIR-LAB/Raccoonbot_Openvla.git 를 참고하여 환경설정 진행함.
 
-0~3번 server에서 실행, 4번 local-server 실행<br>
+기본 베이스 라인
+  물체 : 색깔 원통 4개
+  task : grasp
+  언어 명령 : grasp the {color} cylinder
+  action : dx, dy, dz, gripper
+
+확장 버전
+  물체 : 색깔 원통 4개 + 2cm x 2cm 의 흰색 정육면체 1개
+  task : grasp, lift, pick and place
+  언어 명령 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four
+  action : dx, dy, dz, dpitch, gripper
+
+## 추가 기능 구현 목록 정리
+
+### Grasp 데이터
+처음에 pitch를 포함하여 grasp을 시토할 때 발생한 문제들
+  1. 다른 물체와의 접촉을 방지하기 위해 물체 접근 시 pitch 각을 90도로 설정하여 지면과 수직이 되도록 설정함
+     <img width="342" height="318" alt="image" src="https://github.com/user-attachments/assets/28a70938-9d64-4d7f-b534-69a7f4029eb3" />
+  
+  2. 90도로 설정하니 물체 접근 시 로봇에 무리가 가는 것을 확인. 이후 접근 각도를 완화시킴
+     <img width="622" height="616" alt="image" src="https://github.com/user-attachments/assets/5405e751-6f17-4778-b706-1cf8c73b89b9" />
+     
+  3. 각도를 눕히니 다른 물체와의 접촉 발생. 로봇 중심 기준 원호를 그리는 선 위에 물체를 배치하여 다른 물체와의 접촉을 방지함.
+     <img width="552" height="568" alt="image" src="https://github.com/user-attachments/assets/dec98886-45ce-46ff-a950-a41885300fe5" />
+
+     원호 거리 설정
+      ```
+      DEFAULT_OBJECT_X_RANGE = (-0.11, 0.11)
+      DEFAULT_OBJECT_Y_RANGE = (0.19, 0.21)
+      DEFAULT_MIN_OBJECT_DISTANCE = 0.045
+      ```
+
+  5. 이번엔 로봇이 바닥에 부딪치며 지면과의 접촉 문제가 발생하여 물체를 집기 전 pitch 값을 0으로 고정
+     <img width="612" height="611" alt="image" src="https://github.com/user-attachments/assets/37ae9fda-7d98-4f50-b7bc-e20d82df0442" />
+
+  6. 접근 자체는 안정적이나 물체에 도달하기 전에 그리퍼를 닫아버림. 최종적으로 z축 방향으로 -2cm 더 내려가서 그리퍼를 동작시키도록 함.
+     <img width="258" height="268" alt="image" src="https://github.com/user-attachments/assets/fadc2c28-3bc9-4aab-a7f6-326cbfb90169" />
+
+grasp 시 물체는 일정 간격을 기준으로 원호를 그리며 생성되며, 각 데이터 생성마다 랜덤 배치 시켜 여러 데이터를 수집하도록 함. 
+모든 데이터셋은 각각의 물체를 똑같은 비율로 수집함
+
+최종 결과
+[grasp the cube.webm](https://github.com/user-attachments/assets/9a6d5ac7-f95b-4f2d-8142-03b3815c19a2)
 
 
-## 0. Dependencies
-```
-git clone https://github.com/KWU-FAIR-LAB/Raccoonbot_Openvla.git
-```
+### Lift 데이터
+물체를 grasp 한 후 지면 위로 +5cm하는 것이 기준
+<img width="258" height="268" alt="image" src="https://github.com/user-attachments/assets/43325b45-6e03-43ad-b310-4c58a0b81dbe" />
 
-필요한 패키지 설치
-```
-apt update
-apt install -y \
-  libegl1 \
-  libgl1 \
-  libglvnd0 \
-  libglx0 \
-  libopengl0 \
-  libgles2 \
-  libegl1-mesa \
-  libegl1-mesa-dev \
-  mesa-utils
+물체를 잘 들어올리긴 하나 들어올릴 때 로봇팔과 지면의 접촉 위험이 있어, 물체를 접촉하기 직전과 접촉한 후 일정 구간동안 pitch 값을 0으로 고정시킴
+<img width="258" height="268" alt="image" src="https://github.com/user-attachments/assets/7a98fa3a-1487-42aa-a567-2436d50920db" />
 
-cd Raccoonbot_Openvla/openvla
-pip install .
-```
+lift 또한 물체는 일정 간격을 기준으로 원호를 그리며 생성되며, 각 데이터 생성마다 랜덤 배치 시켜 여러 데이터를 수집하도록 함. 
 
-## 1. Dataset 생성
-MuJoCo 가상환경에서 finetuning을 위한 데이터를 수집 <br>
-(main 함수 `num_episodes`으로 dataset sample 수 변경 가능)
-```
-cd /data/Raccoonbot_Openvla/Mujoco
-python raccoon_grasp_multicolor_scene_dataset.py
-```
-실행하면 /data/Raccoonbot_Openvla/Mujoco/raccoon_grasp_colored_cylinder 하위에 episode별로 dataset png 확인 가능
+lift 데이터 1000개를 수집하여 모델을 학습시켜주니 접근 후 grasp 까지는 진행하나 이후 들어올리지 못하는 문제가 발생
+-> lift 데이터 이외에 물체를 집은 상태에서 들어올리기만 하는 데이터를 따로 모아 학습에 포함시켜 행동을 강화함.
+lift 전체 과정 1000개 + lift 구간 과정 1000개 = 총 2000개의 데이터 수집 진행.
 
-## 2. rlds 파일 변환
-raw data를 rlds builder에 맞게 변경
-아래 명령문 그대로 실행
-```
-cd /data/Raccoonbot_Openvla/Mujoco/raccoon_dataset
-python convert_raw_to_openvla_rlds_intermediate.py \
---raw_root /data/Raccoonbot_Openvla/Mujoco/raccoon_grasp_colored_cylinder \
---out_root /data/Raccoonbot_Openvla/Mujoco/raccoon_dataset/openvla_rlds_intermediate \
---val_ratio 0.1
-```
+최종 결과
+[llift.webm](https://github.com/user-attachments/assets/c633d2ef-cedc-4158-8983-d76b310eec75)
 
-## 2-1. rlds builder
-rlds builder 실행
-아래 명령문 그대로 실행
-```
-cd /data/Raccoonbot_Openvla/Mujoco/rlds_dataset_builder/raccoon_pick_place
-tfds build --overwrite
-```
-실행하면 root 하위에 tensorflow_datasets 폴더 생성됨
-```
-mv /root/tensorflow_datasets /data/Raccoonbot_Openvla/
-```
+### Pick and Place
+기존의 5가지 물체를 사용해 물체를 집고 다른 물체 위에 올리는 task 를 생성하여 학습
+[Screencast from 2026-06-02 03-43-58.webm](https://github.com/user-attachments/assets/4fa8f37b-df8d-4e2b-9731-2385d7ee6d76)
 
-## 3. Raccoonbot 기반 OpenVLA finetuning
-아래 명령어 그대로 실행 <br>
-(`max_steps`, `save_steps` 변경 가능)
-```
-cd /data/Raccoonbot_Openvla/openvla
-export PYTHONPATH=/data/Raccoonbot_Openvla/openvla:$PYTHONPATH
+물체를 제대로 들어올리지 못하는 문제가 발생하여, task를 단순화 하여 하나의 물체만을 고정된 위치에 생성하여 다른 위치에 놓도록 함. 
 
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=0 \
-torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
-  --vla_path openvla/openvla-7b \
-  --data_root_dir /data/Raccoonbot_Openvla/tensorflow_datasets \
-  --dataset_name raccoon_pick_place \
-  --run_root_dir /data/Raccoonbot_Openvla/openvla/openvla-runs \
-  --adapter_tmp_dir /data/Raccoonbot_Openvla/openvla/openvla-adapter-tmp \
-  --lora_rank 32 \
-  --batch_size 8 \
-  --grad_accumulation_steps 2 \
-  --learning_rate 5e-4 \
-  --max_steps 30000 \
-  --save_steps 30000 \
-  --run_id_note raccoon-eef-v100
-```
-
-## 4. Mujoco 환경 Inference (local-server)
-1~3번을 진행했다면 4-1은 건너뛰고 이후 명령어에서 본인이 finetuning한 모델 경로로 modelpath를 변경하여 진행
-
-## 4-1. Hugging Face에서 RaccoonBot finetuned OpenVLA 모델 다운로드
-서버에서 terminal에 아래 명령어를 입력하여 모델 다운로드
-```
-pip install -U huggingface_hub
-
-hf download fair-lab/openvla-7b-finetuned-raccoonbot --local-dir /data/Raccoonbot_Openvla/openvla/openvla-runs/openvla-7b-finetuned-raccoonbot
-``` 
-
-## 4-2. 서버측 코드 실행
-server 실행 명령문<br>
-만약 1~3번을 진행하여 직접 finetuning했다면 model path를 openvla-runs/ 아래에 있는 모델 디렉토리로 변경하고 진행<br>
-```
-cd /data/Raccoonbot_Openvla/openvla
-CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
-  --model_path /data/Raccoonbot_Openvla/openvla/openvla-runs/openvla-7b-finetuned-raccoonbot \
-  --default-unnorm-key raccoon_pick_place \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --device cuda
-```
-
-## 4-3. 클라이언트측에서 실행할 환경 설정
-클라이언트측 코드와 MuJoCo xml 파일 [다운로드](https://drive.google.com/drive/folders/1xrH3FoTfKC9CiUE-kDRorxTKMMq0O7Px?usp=sharing) 후 압축 풀기 <br>
-파일: openvla_multicolor_client.py, openvla_multicolor_client_real_robot.py, raccoon_env.py, Raccoon_colored_cylinder.xml, RaccoonBot_S.xml, requirements.txt
-
-VSCode로 압축 풀은 상위 폴더를 열고 terminal에서 환경설정
-```
-pip install -r requirments.txt
-```
-
-## 4-4. 클라이언트측 코드 실행
-target_color를 **[red, blue, green, yellow]** 로 수정하면 그에 맞게 prompt가 변경됨
-
-⭐ local 실행 명령문
-```
-python openvla_multicolor_client.py --server_url http://127.0.0.1:8000 --xml_path Raccoon_colored_cylinder.xml --target_color red --use_viewer
-```
-
-## 4-5. 실제 라쿤봇을 연결하여 실행
-openvla_multicolor_client_real_robot.py를 실행하면 MuJoCo 환경에서 동작하는 Action을 로봇이 동일하게 수행
-
-⭐ local 실행 명령문
-```
-python openvla_multicolor_client_real_robot.py --server_url http://127.0.0.1:8000 --target_color red --use_real_robot --use_viewer
-```
