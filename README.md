@@ -43,7 +43,7 @@
 grasp 시 물체는 일정 간격을 기준으로 원호를 그리며 생성되며, 각 데이터 생성마다 랜덤 배치 시켜 여러 데이터를 수집하도록 함. <br>
 모든 데이터셋은 각각의 물체를 똑같은 비율로 수집함<br>
 
-최종 결과<br>
+최종 결과 동영상 <br>
 [grasp the cube.webm](https://github.com/user-attachments/assets/9a6d5ac7-f95b-4f2d-8142-03b3815c19a2)<br>
 
 
@@ -60,7 +60,7 @@ lift 데이터 1000개를 수집하여 모델을 학습시켜주니 접근 후 g
 -> lift 데이터 이외에 물체를 집은 상태에서 들어올리기만 하는 데이터를 따로 모아 학습에 포함시켜 행동을 강화함.<br>
 lift 전체 과정 1000개 + lift 구간 과정 1000개 = 총 2000개의 데이터 수집 진행.<br>
 
-최종 결과<br>
+최종 결과 동영상 <br>
 [llift.webm](https://github.com/user-attachments/assets/c633d2ef-cedc-4158-8983-d76b310eec75)<br>
 
 ### Pick and Place<br>
