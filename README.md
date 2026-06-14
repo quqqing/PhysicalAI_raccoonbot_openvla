@@ -319,20 +319,20 @@ python openvla_multicolor_client.py \
 
 최종 결과 동영상 <br>
 
-### 최종 데이터셋 확장 목록
-1. 새 객체 추가 : white cube
-2. 새 task 추가 : lift, pick and place
-3. 언어 instruction 다양화 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four
+### 최종 데이터셋 확장 목록<br>
+1. 새 객체 추가 : white cube<br>
+2. 새 task 추가 : lift, pick and place<br>
+3. 언어 instruction 다양화 : grasp the {color} {cylinder or cube}, lift the {color} {cylinder or cube}, pick the red cylinder and place it at position four<br>
 
 **Visualize one episode**<br>
-grasp
+grasp<br>
 <img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/f043ba9c-b45f-4083-853f-6f615dbe6f42" />
 <img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/21470747-109c-4170-b4e7-229392ca9b7e" />
 <img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/4ba1a35f-e7b9-42c4-8262-31ead9d3e81d" />
 <img width="256" height="256" alt="frame_000030" src="https://github.com/user-attachments/assets/329a4af3-4f10-4a6d-b8e6-b6c4ecb4efbf" />
 <img width="256" height="256" alt="frame_000033" src="https://github.com/user-attachments/assets/8d550ef8-d527-4fea-8ca6-33c445134093" />
 
-lift
+lift<br>
 <img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/0373694b-75b5-4597-8048-85dad1f1eab4" />
 <img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/9a46cb85-a2fe-4f88-a3b6-36bd4ae888b4" />
 <img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/eff1be54-da36-4f22-b802-3f6db0179000" />
@@ -340,7 +340,7 @@ lift
 <img width="256" height="256" alt="frame_000040" src="https://github.com/user-attachments/assets/0fa8e241-c2ae-4a8e-9fde-01c400ee3221" />
 <img width="256" height="256" alt="frame_000048" src="https://github.com/user-attachments/assets/95691486-55d8-4c6f-8759-cce3529175e7" />
 
-pick and place
+pick and place<br>
 <img width="256" height="256" alt="frame_000000" src="https://github.com/user-attachments/assets/487cba4e-153c-48a8-aa9e-9afd30ab2148" />
 <img width="256" height="256" alt="frame_000010" src="https://github.com/user-attachments/assets/a56aa6dc-3fc3-4cf0-bfda-d091ebc95185" />
 <img width="256" height="256" alt="frame_000020" src="https://github.com/user-attachments/assets/f0fa8082-8e31-4266-a818-3cbc270cf693" />
