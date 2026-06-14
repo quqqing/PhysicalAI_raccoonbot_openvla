@@ -351,7 +351,7 @@ pick and place
 <img width="256" height="256" alt="frame_000070" src="https://github.com/user-attachments/assets/4e5beb1a-6173-43e8-a2ff-cf9aa3af488d" />
 <img width="256" height="256" alt="frame_000080" src="https://github.com/user-attachments/assets/9884d195-1131-4c0b-920d-e11c630c4e23" />
 <img width="256" height="256" alt="frame_000090" src="https://github.com/user-attachments/assets/50a1defb-fbe2-4789-a609-d83866b4f248" />
-<img width="256" height="256" alt="frame_000090" src="https://github.com/user-attachments/assets/99db2045-1123-4aa1-a799-f8eb46d36381" />
+<img width="256" height="256" alt="frame_000100" src="https://github.com/user-attachments/assets/76aee96e-87c5-462a-9b86-7ef70f5a8072" />
 <img width="256" height="256" alt="frame_000110" src="https://github.com/user-attachments/assets/29cf7d70-d47a-445c-a9f0-8ad4a799eb34" />
 
 
