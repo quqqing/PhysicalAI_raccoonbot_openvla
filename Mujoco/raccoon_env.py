@@ -15,7 +15,7 @@ class WorkspaceBounds:
     x_min: float = -0.16
     x_max: float = 0.16
     y_min: float = 0.11
-    y_max: float = 0.18
+    y_max: float = 0.21
     z_min: float = 0.02
     z_max: float = 0.10
 
@@ -36,9 +36,9 @@ class SyncSimRaccoonEnv:
       - OpenVLA 7D delta action: [dx, dy, dz, droll, dpitch, dyaw, gripper]
 
     Notes:
-      - This robot only uses xyz + gripper for execution.
-      - Rotation deltas are ignored because the 4-axis structure does not support
-        full 6D end-effector control.
+      - This robot uses xyz + one gripper pitch DOF + gripper for execution.
+      - Roll/yaw deltas are ignored because the 4-axis structure does not support
+        full 6D end-effector control; OpenVLA dpitch is mapped to Joint4.
       - IK failures are reduced with conservative workspace clipping and fallback targets.
     """
 
@@ -72,6 +72,7 @@ class SyncSimRaccoonEnv:
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
         self.renderer = mujoco.Renderer(self.model, height=image_size[1], width=image_size[0])
+        self.preview_renderers: Dict[Tuple[int, int], mujoco.Renderer] = {}
         self.camera_name = camera_name
         self.use_viewer = use_viewer
         self.workspace = workspace or WorkspaceBounds()
@@ -79,6 +80,19 @@ class SyncSimRaccoonEnv:
         self.viewer = None
         if self.use_viewer:
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+
+            if self.camera_name is not None:
+                cam_id = mujoco.mj_name2id(
+                    self.model,
+                    mujoco.mjtObj.mjOBJ_CAMERA,
+                    self.camera_name,
+                )
+                if cam_id == -1:
+                    raise ValueError(f"camera not found: {self.camera_name}")
+
+                self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+                self.viewer.cam.fixedcamid = cam_id
+                self.viewer.sync()
 
         self.target_angles = [0.0] * 4
         self.current_setpoints = [0.0] * 5
@@ -94,7 +108,7 @@ class SyncSimRaccoonEnv:
 
     # ---------- kinematics / commands ----------
 
-    def _calc_inv_kinematics(self, x: float, y: float, z: float) -> Optional[List[float]]:
+    def _calc_inv_kinematics(self, x: float, y: float, z: float, pitch: Optional[float] = None) -> Optional[List[float]]:
         if not (isinstance(x, (int, float)) and isinstance(y, (int, float)) and isinstance(z, (int, float))):
             return None
 
@@ -140,12 +154,16 @@ class SyncSimRaccoonEnv:
             th2_deg = math.degrees(th2)
             th3_deg = math.degrees(th3)
             th4_deg = -(th2_deg + th3_deg) - 90.0
+            if pitch is not None:
+                th4_deg = math.degrees(float(pitch)) - th2_deg - th3_deg - 90.0
 
             if th1_deg < -120.0 or th1_deg > 120.0:
                 continue
             if th2_deg < -90.0 or th2_deg > 30.0:
                 continue
             if th3_deg < -150.0 or th3_deg > 0.0:
+                continue
+            if th4_deg < -105.0 or th4_deg > 105.0:
                 continue
 
             return [th1_deg, th2_deg, th3_deg, th4_deg]
@@ -166,8 +184,8 @@ class SyncSimRaccoonEnv:
                 percent = np.clip(speed, 0.0, 100.0)
                 self.joint_velocities[idx] = (percent / 100.0) * self.MAX_SPEEDS[idx]
 
-    def move_to(self, x_cm: float, y_cm: float, z_cm: float, speed: int = 70) -> None:
-        angles = self._calc_inv_kinematics(x_cm, y_cm, z_cm)
+    def move_to(self, x_cm: float, y_cm: float, z_cm: float, speed: int = 70, pitch: Optional[float] = None) -> None:
+        angles = self._calc_inv_kinematics(x_cm, y_cm, z_cm, pitch=pitch)
         if angles is None:
             raise ValueError(f"도달할 수 없는 좌표입니다: ({x_cm:.2f}, {y_cm:.2f}, {z_cm:.2f}) cm")
         self.degree_to([1, 2, 3, 4], angles[:4], speed)
@@ -190,9 +208,21 @@ class SyncSimRaccoonEnv:
             self.gripper_mode = self.GRIP_MODE_FREE
 
     def execute_absolute_action4(self, action: Sequence[float], speed: int = 70) -> None:
-        target_x, target_y, target_z, gripper = action
-        self.move_to(float(target_x) * 100.0, float(target_y) * 100.0, float(target_z) * 100.0, speed=speed)
-        if float(gripper) >= 0.5:
+        if len(action) >= 5:
+            target_x, target_y, target_z, target_pitch, gripper = action[:5]
+            self.unlock()
+            pitch = float(target_pitch)
+        else:
+            target_x, target_y, target_z, gripper = action[:4]
+            pitch = None
+        self.move_to(
+            float(target_x) * 100.0,
+            float(target_y) * 100.0,
+            float(target_z) * 100.0,
+            speed=speed,
+            pitch=pitch,
+        )
+        if float(gripper) > 0.5:
             self.close_gripper()
         else:
             self.open_gripper()
@@ -203,6 +233,7 @@ class SyncSimRaccoonEnv:
         speed: int = 70,
         max_delta_xyz: float = 0.01,
         delta_scale: float = 1.0,
+        max_delta_pitch: float = 0.15,
         shrink_ratio: float = 0.15,
         max_retries: int = 3,
     ) -> Dict[str, object]:
@@ -211,15 +242,22 @@ class SyncSimRaccoonEnv:
 
         dx, dy, dz, droll, dpitch, dyaw, gripper = [float(v) for v in action[:7]]
         raw_dx, raw_dy, raw_dz = dx, dy, dz
+        raw_dpitch = dpitch
 
         dx = float(np.clip(dx * delta_scale, -max_delta_xyz, max_delta_xyz))
         dy = float(np.clip(dy * delta_scale, -max_delta_xyz, max_delta_xyz))
         dz = float(np.clip(dz * delta_scale, -max_delta_xyz, max_delta_xyz))
+        dpitch = float(np.clip(dpitch * delta_scale, -max_delta_pitch, max_delta_pitch))
 
         ee_x, ee_y, ee_z = self.get_ee_pose()
+        ee_pitch = self.get_ee_pitch()
+        use_pitch = abs(dpitch) > 1e-6
+        target_pitch = ee_pitch + dpitch if use_pitch else None
+        if use_pitch:
+            self.unlock()
 
         safe_x_min, safe_x_max = -0.18, 0.18
-        safe_y_min, safe_y_max = 0.05, 0.20
+        safe_y_min, safe_y_max = 0.05, 0.21
         safe_z_min, safe_z_max = 0.02, 0.11
 
         cur_dx, cur_dy, cur_dz = dx, dy, dz
@@ -234,14 +272,16 @@ class SyncSimRaccoonEnv:
             tz = float(np.clip(ee_z + cur_dz, safe_z_min, safe_z_max))
 
             try:
-                self.move_to(tx * 100.0, ty * 100.0, tz * 100.0, speed=speed)
+                self.move_to(tx * 100.0, ty * 100.0, tz * 100.0, speed=speed, pitch=target_pitch)
                 chosen_target = (tx, ty, tz)
                 chosen_delta = (cur_dx, cur_dy, cur_dz)
                 tried_results.append(
                     {
                         "retry_index": retry_idx,
                         "delta_xyz": [cur_dx, cur_dy, cur_dz],
+                        "delta_pitch": dpitch,
                         "target_xyz": [tx, ty, tz],
+                        "target_pitch": target_pitch,
                         "ok": True,
                         "error": None,
                     }
@@ -253,7 +293,9 @@ class SyncSimRaccoonEnv:
                     {
                         "retry_index": retry_idx,
                         "delta_xyz": [cur_dx, cur_dy, cur_dz],
+                        "delta_pitch": dpitch,
                         "target_xyz": [tx, ty, tz],
+                        "target_pitch": target_pitch,
                         "ok": False,
                         "error": str(exc),
                     }
@@ -268,12 +310,14 @@ class SyncSimRaccoonEnv:
                 f"IK fail | "
                 f"ee=({ee_x:.4f},{ee_y:.4f},{ee_z:.4f}) | "
                 f"raw_delta=({raw_dx:.4f},{raw_dy:.4f},{raw_dz:.4f}) | "
+                f"raw_dpitch={raw_dpitch:.4f} | "
                 f"applied_delta=({dx:.4f},{dy:.4f},{dz:.4f}) | "
+                f"applied_dpitch={dpitch:.4f} | "
                 f"retries={max_retries} | "
                 f"last_error={last_exc}"
             )
 
-        if gripper >= 0.5:
+        if gripper > 0.5:
             self.close_gripper()
         else:
             self.open_gripper()
@@ -285,11 +329,15 @@ class SyncSimRaccoonEnv:
         return {
             "success": True,
             "ee_pose_before": [ee_x, ee_y, ee_z],
+            "ee_pitch_before": ee_pitch,
             "raw_action": [float(v) for v in action[:7]],
             "raw_delta_xyz": [raw_dx, raw_dy, raw_dz],
+            "raw_delta_pitch": raw_dpitch,
             "applied_delta_xyz": [dx, dy, dz],
+            "applied_delta_pitch": dpitch,
             "final_delta_xyz": [final_dx, final_dy, final_dz],
             "target_xyz": [tx, ty, tz],
+            "target_pitch": target_pitch,
             "actual_move_xyz": actual_move,
             "gripper_cmd": gripper,
             "tried_results": tried_results,
@@ -345,11 +393,16 @@ class SyncSimRaccoonEnv:
 
         self.data.ctrl[4] = self.current_setpoints[4]
 
-    def step_n(self, n_steps: int) -> None:
-        for _ in range(int(n_steps)):
+    def step_n(self, n_steps: int, viewer_sync_every: int = 20) -> None:
+        for i in range(int(n_steps)):
             self._apply_controls_once()
             mujoco.mj_step(self.model, self.data)
-            if self.viewer is not None and self.viewer.is_running():
+
+            if (
+                self.viewer is not None
+                and self.viewer.is_running()
+                and i % viewer_sync_every == 0
+            ):
                 self.viewer.sync()
 
     def steps_for_seconds(self, seconds: float) -> int:
@@ -378,6 +431,19 @@ class SyncSimRaccoonEnv:
         cam_id = self.camera_name if self.camera_name is not None else -1
         self.renderer.update_scene(self.data, camera=cam_id)
         image = self.renderer.render()
+        return image.copy()
+
+    def render_rgb_size(self, image_size: Tuple[int, int]) -> np.ndarray:
+        width, height = int(image_size[0]), int(image_size[1])
+        key = (width, height)
+        renderer = self.preview_renderers.get(key)
+        if renderer is None:
+            renderer = mujoco.Renderer(self.model, height=height, width=width)
+            self.preview_renderers[key] = renderer
+
+        cam_id = self.camera_name if self.camera_name is not None else -1
+        renderer.update_scene(self.data, camera=cam_id)
+        image = renderer.render()
         return image.copy()
 
     def get_ee_pose(self, body_name: str = "Link4") -> Tuple[float, float, float]:
@@ -410,11 +476,14 @@ class SyncSimRaccoonEnv:
         # return in meters (because the rest of your pipeline uses meters for ee_pose)
         return x_cm / 100.0, y_cm / 100.0, z_cm / 100.0
 
+    def get_ee_pitch(self) -> float:
+        return float(self.data.qpos[1] + self.data.qpos[2] + self.data.qpos[3] + math.pi / 2.0)
+
     def get_observation(self) -> Dict[str, object]:
         rs = self.get_robot_state()
         obj = self.get_object_pose()
         img = self.render_rgb()
-        ee_pose = list(self.get_ee_pose())
+        ee_pose = list(self.get_ee_pose()) + [self.get_ee_pitch()]
         return {
             "image": img,
             "joint_angles": rs["joint_angles"],
@@ -507,6 +576,9 @@ class SyncSimRaccoonEnv:
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None
+        for renderer in self.preview_renderers.values():
+            renderer.close()
+        self.preview_renderers.clear()
     
     def debug_check_current_ee_reachable(self):
         ee_x, ee_y, ee_z = self.get_ee_pose()

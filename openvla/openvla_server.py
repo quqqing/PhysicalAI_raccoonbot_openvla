@@ -27,10 +27,17 @@ class PredictRequest(BaseModel):
     do_sample: bool = False
 
 class OpenVLAServingModel:
-    def __init__(self, model_path: str, device: str = "cuda", default_unnorm_key: str = "bridge_orig"):
+    def __init__(
+        self,
+        model_path: str,
+        device: str = "cuda",
+        default_unnorm_key: str = "bridge_orig",
+        attn_implementation: str = "sdpa",
+    ):
         self.model_path = model_path
         self.device = device
         self.default_unnorm_key = default_unnorm_key
+        self.attn_implementation = attn_implementation
 
         self.processor = AutoProcessor.from_pretrained(
             model_path,
@@ -39,7 +46,7 @@ class OpenVLAServingModel:
 
         self.vla = AutoModelForVision2Seq.from_pretrained(
             model_path,
-            attn_implementation="sdpa",
+            attn_implementation=attn_implementation,
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
             trust_remote_code=True,
@@ -113,12 +120,19 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["sdpa", "flash_attention_2", "eager"],
+    )
     args = parser.parse_args()
 
     serving_model = OpenVLAServingModel(
         model_path=args.model_path,
         device=args.device,
         default_unnorm_key=args.default_unnorm_key,
+        attn_implementation=args.attn_implementation,
     )
     app = build_app(serving_model)
 

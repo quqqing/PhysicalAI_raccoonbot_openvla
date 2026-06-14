@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import shutil
 from pathlib import Path
@@ -65,9 +66,9 @@ from typing import Any, Dict, List, Optional, Tuple
 # For this 4-axis robot:
 #   - state still uses padded joint state for observation
 #   - action uses EE delta from meta.json["ee_pose"]
-#   - ee_pose is assumed to be [x, y, z]
-#   - rotational deltas are zero-filled (raw data has no EE orientation)
-#   - gripper action uses raw step["action"][3] (0=open, 1=close)
+#   - ee_pose is assumed to be [x, y, z, pitch] when available
+#   - dpitch uses the RaccoonBot Joint4-derived gripper pitch; droll/dyaw are zero-filled
+#   - gripper action uses the last raw action element (0=open, 1=close)
 #   - final step action uses zero delta + current gripper_cmd
 
 
@@ -103,39 +104,60 @@ def pad_joint_state(joint_angles: List[Any], gripper_state: float, joint_pad_dim
 
 def gripper_action_from_raw(step: Dict[str, Any]) -> float:
     """
-    Raw step["action"] is [target_x, target_y, target_z, gripper_cmd].
+    Raw step["action"] is [target_x, target_y, target_z, gripper_cmd] for
+    old data or [target_x, target_y, target_z, target_pitch, gripper_cmd].
     Keep the last element as gripper command.
     0.0=open, 1.0=close.
     """
     raw_action = step.get("action", [0.0, 0.0, 0.0, 0.0])
     if len(raw_action) < 4:
         return 0.0
-    return 1.0 if float(raw_action[3]) >= 0.5 else 0.0
+    return 1.0 if float(raw_action[-1]) >= 0.5 else 0.0
+
+
+def ee_pitch_from_step(step: Dict[str, Any]) -> float:
+    ee_pose = to_float_list(step.get("ee_pose", []))
+    if len(ee_pose) >= 4:
+        return float(ee_pose[3])
+
+    joint_angles = to_float_list(step.get("joint_angles", []))
+    if len(joint_angles) >= 4:
+        return float(joint_angles[1] + joint_angles[2] + joint_angles[3] + math.pi / 2.0)
+
+    return 0.0
+
+
+def angle_delta(next_angle: float, curr_angle: float) -> float:
+    return float(math.atan2(math.sin(next_angle - curr_angle), math.cos(next_angle - curr_angle)))
 
 
 def ee_delta_action(
-    curr_ee_pose: List[Any],
-    next_ee_pose: Optional[List[Any]],
+    curr_step: Dict[str, Any],
+    next_step: Optional[Dict[str, Any]],
 ) -> List[float]:
     """
     Build EEF_POS action:
       [dx, dy, dz, droll, dpitch, dyaw, gripper_cmd]
     Raw ee_pose is assumed to contain at least [x, y, z].
-    Since raw data does not include EE orientation, rotational deltas are zero-filled.
+    RaccoonBot only exposes one controllable EE rotation, mapped to dpitch.
     """
+    curr_ee_pose = curr_step.get("ee_pose", [])
     curr = to_float_list(curr_ee_pose)
     if len(curr) < 3:
         raise ValueError(f"ee_pose must have at least 3 dims, got {len(curr)}")
 
-    if next_ee_pose is None:
+    if next_step is None:
         dpos = [0.0, 0.0, 0.0]
+        dpitch = 0.0
     else:
+        next_ee_pose = next_step.get("ee_pose", [])
         nxt = to_float_list(next_ee_pose)
         if len(nxt) < 3:
             raise ValueError(f"next ee_pose must have at least 3 dims, got {len(nxt)}")
         dpos = [float(n - c) for c, n in zip(curr[:3], nxt[:3])]
+        dpitch = angle_delta(ee_pitch_from_step(next_step), ee_pitch_from_step(curr_step))
 
-    return [dpos[0], dpos[1], dpos[2], 0.0, 0.0, 0.0]
+    return [dpos[0], dpos[1], dpos[2], 0.0, dpitch, 0.0]
 
 
 def is_idle_transition(
@@ -164,11 +186,13 @@ def is_idle_transition(
         ee_delta_norm = sum(v * v for v in dee) ** 0.5
     else:
         ee_delta_norm = float("inf")
+    pitch_delta = abs(angle_delta(ee_pitch_from_step(next_step), ee_pitch_from_step(curr_step)))
 
     return (
         joint_delta_norm < min_joint_delta_norm
         and grip_delta < min_gripper_delta
         and ee_delta_norm < min_ee_delta_norm
+        and pitch_delta < min_ee_delta_norm
     )
 
 
@@ -254,10 +278,7 @@ def convert_episode(
             joint_pad_dim=joint_pad_dim,
         )
 
-        ee_delta = ee_delta_action(
-            curr_ee_pose=curr.get("ee_pose", []),
-            next_ee_pose=(nxt.get("ee_pose", []) if nxt is not None else None),
-        )
+        ee_delta = ee_delta_action(curr_step=curr, next_step=nxt)
         grip_cmd = gripper_action_from_raw(curr)
         action = ee_delta + [grip_cmd]
 
@@ -295,6 +316,7 @@ def convert_episode(
         "episode_metadata": {
             "episode_id": int(meta.get("episode_id", -1)),
             "instruction": instruction,
+            "task_type": str(meta.get("task_type", "")),
             "success": success,
             "goal_xy": to_float_list(meta.get("goal_xy", [])),
             "box_init_xy": to_float_list(meta.get("box_init_xy", [])),
@@ -307,8 +329,8 @@ def convert_episode(
             "action_semantics": {
                 "type": "EEF_POS",
                 "ee_position_action": "next_ee_pose[:3] - current_ee_pose[:3]",
-                "ee_rotation_action": "[0,0,0] because raw data has no EE orientation deltas",
-                "gripper_action": "raw step['action'][3] mapped to 0=open, 1=close",
+                "ee_rotation_action": "[0,dpitch,0] where dpitch is next_pitch - current_pitch",
+                "gripper_action": "last raw step['action'] element mapped to 0=open, 1=close",
             },
         },
         "steps": episode_steps,
@@ -422,6 +444,7 @@ def convert_dataset(
                 "episode_metadata": {
                     "episode_id": "int",
                     "instruction": "str",
+                    "task_type": "str",
                     "success": "bool",
                     "goal_xy": "list[float]",
                     "box_init_xy": "list[float]",
@@ -446,8 +469,8 @@ def convert_dataset(
         },
         "notes": [
             "state = [joint_angles padded to 7, gripper_state]",
-            "action = [next_ee_pose[:3] - current_ee_pose[:3], 0,0,0, gripper_cmd]",
-            "rotational deltas are zero-filled because raw data does not include EE orientation deltas",
+            "action = [next_ee_pose[:3] - current_ee_pose[:3], 0, dpitch, 0, gripper_cmd]",
+            "dpitch uses ee_pose[3] when present, otherwise joint_angles[1]+joint_angles[2]+joint_angles[3]+pi/2",
             "raw waypoint action is preserved in each step as raw_waypoint_action for debugging",
             "This is an intermediate format; your TFDS/RLDS builder should load observation.image from disk and emit actual RLDS records.",
         ],

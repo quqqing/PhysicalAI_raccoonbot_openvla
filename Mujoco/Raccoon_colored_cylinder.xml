@@ -6,7 +6,7 @@
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
-    <global azimuth="120" elevation="-20"/>
+    <global azimuth="120" elevation="-20" offwidth="1024" offheight="1024"/>
   </visual>
 
   <asset>
@@ -58,6 +58,16 @@
       <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
       <geom name="geom_green" type="cylinder" size="0.0075 0.01"
         rgba="0 1 0 1"
+        friction="1 1 1" condim="6"
+        solimp="0.99 0.99 0.001" solref="0.002 1"/>
+    </body>
+
+    <!-- Cube object: 2cm side length -->
+    <body name="target_object_cube" pos="0.00 0.18 0.01">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.05" diaginertia="0.00000001 0.00000001 0.00000001"/>
+      <geom name="geom_cube" type="box" size="0.01 0.01 0.01"
+        rgba="1 1 1 1"
         friction="1 1 1" condim="6"
         solimp="0.99 0.99 0.001" solref="0.002 1"/>
     </body>

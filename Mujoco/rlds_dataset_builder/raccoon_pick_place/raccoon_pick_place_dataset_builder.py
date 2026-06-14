@@ -1,13 +1,16 @@
 from typing import Iterator, Tuple, Any
 from pathlib import Path
 import json
+import math
 
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
 
-INTERMEDIATE_ROOT = Path("/data/Raccoonbot_Openvla/Mujoco/raccoon_dataset/openvla_rlds_intermediate")
+INTERMEDIATE_ROOT = Path(
+    "/home/min/vla_lab/Raccoonbot_Openvla/Mujoco/raccoon_dataset/openvla_rlds_pitch_fixed_all_tasks_8500"
+)
 
 
 class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
@@ -72,7 +75,7 @@ class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
                         shape=(7,),
                         dtype=np.float32,
                         doc="EEF_POS action: [dx,dy,dz,droll,dpitch,dyaw,gripper_cmd]. "
-                            "Rotation deltas are zero-filled because raw data does not include EE orientation.",
+                            "Only dpitch is used for the 4-DOF RaccoonBot; droll and dyaw are zero-filled.",
                     ),
                     "discount": tfds.features.Scalar(
                         dtype=np.float32,
@@ -104,6 +107,9 @@ class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
                     "goal_xy": tfds.features.Tensor(shape=(2,), dtype=np.float32),
                     "box_init_xy": tfds.features.Tensor(shape=(2,), dtype=np.float32),
                     "box_init_yaw": tfds.features.Scalar(dtype=np.float32),
+                    "task_type": tfds.features.Text(
+                        doc="Task type for the episode, e.g. grasp or lift.",
+                    ),
                     "source_path": tfds.features.Text(
                         doc="Path to the source episode directory.",
                     ),
@@ -249,6 +255,7 @@ class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
                     episode_metadata.get("box_init_xy", [0.0, 0.0]), expected_dim=2
                 ),
                 "box_init_yaw": np.float32(episode_metadata.get("box_init_yaw", 0.0)),
+                "task_type": str(episode_metadata.get("task_type", "")),
                 "source_path": str(episode_dir),
             },
         }
@@ -302,6 +309,7 @@ class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
                 "goal_xy": self._ensure_float32_vector(meta.get("goal_xy", [0.0, 0.0]), expected_dim=2),
                 "box_init_xy": self._ensure_float32_vector(meta.get("box_init_xy", [0.0, 0.0]), expected_dim=2),
                 "box_init_yaw": np.float32(meta.get("box_init_yaw", 0.0)),
+                "task_type": str(meta.get("task_type", "")),
                 "source_path": str(episode_dir),
             },
         }
@@ -384,14 +392,34 @@ class RaccoonPickPlace(tfds.core.GeneratorBasedBuilder):
             raise ValueError("Expected ee_pose with at least 3 values [x, y, z] in both current and next steps")
 
         dpos = np.asarray(nxt_ee[:3], dtype=np.float32) - np.asarray(cur_ee[:3], dtype=np.float32)
+        dpitch = RaccoonPickPlace._angle_delta(
+            RaccoonPickPlace._ee_pitch_from_raw_step(next_step),
+            RaccoonPickPlace._ee_pitch_from_raw_step(cur_step),
+        )
 
         raw_action = cur_step.get("action", [0.0, 0.0, 0.0, 0.0])
-        gripper_cmd = float(raw_action[3]) if len(raw_action) >= 4 else 0.0
+        gripper_cmd = float(raw_action[-1]) if len(raw_action) >= 4 else 0.0
 
         return np.array(
-            [dpos[0], dpos[1], dpos[2], 0.0, 0.0, 0.0, gripper_cmd],
+            [dpos[0], dpos[1], dpos[2], 0.0, dpitch, 0.0, gripper_cmd],
             dtype=np.float32,
         )
+
+    @staticmethod
+    def _ee_pitch_from_raw_step(step: dict) -> float:
+        ee_pose = step.get("ee_pose", [])
+        if len(ee_pose) >= 4:
+            return float(ee_pose[3])
+
+        joint_angles = step.get("joint_angles", [])
+        if len(joint_angles) >= 4:
+            return float(joint_angles[1] + joint_angles[2] + joint_angles[3] + math.pi / 2.0)
+
+        return 0.0
+
+    @staticmethod
+    def _angle_delta(next_angle: float, curr_angle: float) -> float:
+        return float(math.atan2(math.sin(next_angle - curr_angle), math.cos(next_angle - curr_angle)))
 
     @staticmethod
     def _ensure_float32_vector(x, expected_dim: int) -> np.ndarray:

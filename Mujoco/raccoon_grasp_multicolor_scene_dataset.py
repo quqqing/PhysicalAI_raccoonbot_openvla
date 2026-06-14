@@ -41,6 +41,8 @@ class DatasetLogger:
         task_type="pick",
         target_color=None,
         target_body_name=None,
+        place_color=None,
+        place_body_name=None,
         all_object_init_poses=None,
     ):
         episode_name = f"episode_{episode_id:06d}"
@@ -66,6 +68,10 @@ class DatasetLogger:
             self.meta["target_color"] = str(target_color)
         if target_body_name is not None:
             self.meta["target_body_name"] = str(target_body_name)
+        if place_color is not None:
+            self.meta["place_color"] = str(place_color)
+        if place_body_name is not None:
+            self.meta["place_body_name"] = str(place_body_name)
         if all_object_init_poses is not None:
             self.meta["all_object_init_poses"] = all_object_init_poses
 
@@ -147,15 +153,16 @@ class SyncSimRaccoonDataset:
         "blue": "target_object_blue",
         "green": "target_object_green",
         "yellow": "target_object_yellow",
+        "white": "target_object_cube",
     }
     CYLINDER_COLORS = tuple(CYLINDER_BODY_BY_COLOR.keys())
 
-    # Workspace used when all four colored cylinders are visible at once.
-    # Compared with the previous x=(-0.18, 0.18), y=(0.10, 0.18), this keeps
-    # objects slightly farther forward and more centered left-to-right.
-    DEFAULT_OBJECT_X_RANGE = (-0.10, 0.10)
-    DEFAULT_OBJECT_Y_RANGE = (0.16, 0.20)
-    DEFAULT_MIN_OBJECT_DISTANCE = 0.035
+    # Reachable front arc used when all colored objects are visible at once.
+    # This keeps objects inside the arm workspace while leaving side-to-side
+    # clearance so the gripper does not pass through other objects.
+    DEFAULT_OBJECT_X_RANGE = (-0.11, 0.11)
+    DEFAULT_OBJECT_Y_RANGE = (0.19, 0.21)
+    DEFAULT_MIN_OBJECT_DISTANCE = 0.045
 
     def __init__(self, xml_path, image_size=(256, 256), camera_name=None, use_viewer=False):
         if not os.path.exists(xml_path):
@@ -191,9 +198,10 @@ class SyncSimRaccoonDataset:
 
     # ---------- kinematics / commands ----------
 
-    def _calc_inv_kinematics(self, x, y, z):
+    def _calc_inv_kinematics(self, x, y, z, pitch=None):
         """
         Inputs are in centimeters, matching the uploaded move_to code style.
+        pitch is the gripper pitch in radians, where 0 keeps the gripper horizontal.
         Returns [j1, j2, j3, j4] in degrees.
         """
         if isinstance(x, (int, float)) and isinstance(y, (int, float)) and isinstance(z, (int, float)):
@@ -222,12 +230,16 @@ class SyncSimRaccoonDataset:
                 th2 = math.degrees(th2)
                 th3 = math.degrees(th3)
                 th4 = -(th2 + th3) - 90
+                if pitch is not None:
+                    th4 = math.degrees(float(pitch)) - th2 - th3 - 90
 
                 if th1 < -120 or th1 > 120:
                     return None
                 if th2 < -90 or th2 > 30:
                     return None
                 if th3 < -150 or th3 > 0:
+                    return None
+                if pitch is not None and (th4 < -105 or th4 > 105):
                     return None
 
                 return [th1, th2, th3, th4]
@@ -249,11 +261,14 @@ class SyncSimRaccoonDataset:
                 percent = np.clip(speed, 0.0, 100.0)
                 self.joint_velocities[idx] = (percent / 100.0) * self.MAX_SPEEDS[idx]
 
-    def move_to(self, x_cm, y_cm, z_cm, speed=70):
-        angles = self._calc_inv_kinematics(x_cm, y_cm, z_cm)
+    def move_to(self, x_cm, y_cm, z_cm, speed=70, pitch=None):
+        angles = self._calc_inv_kinematics(x_cm, y_cm, z_cm, pitch=pitch)
         if angles is None:
             raise ValueError(f"도달할 수 없는 좌표입니다: ({x_cm:.2f}, {y_cm:.2f}, {z_cm:.2f}) cm")
-        self.degree_to([1, 2, 3, 4], angles[:4], speed)
+        if pitch is None:
+            self.degree_to([1, 2, 3], angles[:3], speed)
+        else:
+            self.degree_to([1, 2, 3, 4], angles[:4], speed)
 
     def open_gripper(self):
         self.gripper_target = self.GRIP_OPEN
@@ -275,11 +290,24 @@ class SyncSimRaccoonDataset:
     def execute_action(self, action, speed=70):
         """
         action = [target_x_m, target_y_m, target_z_m, gripper]
+              or [target_x_m, target_y_m, target_z_m, target_pitch_rad, gripper]
         """
-        target_x, target_y, target_z, gripper = action
+        if len(action) >= 5:
+            target_x, target_y, target_z, target_pitch, gripper = action[:5]
+            self.unlock()
+        else:
+            target_x, target_y, target_z, gripper = action[:4]
+            target_pitch = None
+            self.unlock()
 
         # move_to convention is centimeters.
-        self.move_to(target_x * 100.0, target_y * 100.0, target_z * 100.0, speed=speed)
+        self.move_to(
+            target_x * 100.0,
+            target_y * 100.0,
+            target_z * 100.0,
+            speed=speed,
+            pitch=target_pitch,
+        )
 
         if gripper >= 0.5:
             self.close_gripper()
@@ -361,6 +389,10 @@ class SyncSimRaccoonDataset:
             "gripper_state": gripper_state
         }
 
+    @staticmethod
+    def ee_pitch_from_joint_angles(joint_angles):
+        return float(joint_angles[1] + joint_angles[2] + joint_angles[3] + math.pi / 2.0)
+
     def get_object_pose(self, body_name="target_object"):
         body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if body_id == -1:
@@ -386,13 +418,18 @@ class SyncSimRaccoonDataset:
         obj = self.get_object_pose(object_body_name)
         img = self.render_rgb()
 
-        # EE pose: Link4 position.
+        # EE pose: Link4 position plus gripper pitch.
         link4_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Link4")
         if link4_id != -1:
             ee_pos = self.data.xpos[link4_id].copy()
-            ee_pose_list = [float(ee_pos[0]), float(ee_pos[1]), float(ee_pos[2])]
+            ee_pose_list = [
+                float(ee_pos[0]),
+                float(ee_pos[1]),
+                float(ee_pos[2]),
+                self.ee_pitch_from_joint_angles(rs["joint_angles"]),
+            ]
         else:
-            ee_pose_list = [0.0, 0.0, 0.0]
+            ee_pose_list = [0.0, 0.0, 0.0, 0.0]
 
         return {
             "image": img,
@@ -459,15 +496,7 @@ class SyncSimRaccoonDataset:
         min_distance=None,
         max_tries=1000,
     ):
-        """
-        Randomly place all colored cylinders in the visible workspace.
-
-        Defaults intentionally narrow the spawn area compared with the older
-        single-object collector:
-          - x: -0.18~0.18  ->  -0.10~0.10
-          - y:  0.10~0.18  ->   0.16~0.20
-        A minimum XY distance prevents blocks from overlapping or touching.
-        """
+        """Place objects on a reachable front arc so the gripper path stays clear."""
         colors = tuple(colors or cls.CYLINDER_COLORS)
         x_range = x_range or cls.DEFAULT_OBJECT_X_RANGE
         y_range = y_range or cls.DEFAULT_OBJECT_Y_RANGE
@@ -478,38 +507,100 @@ class SyncSimRaccoonDataset:
         if x_range[0] >= x_range[1] or y_range[0] >= y_range[1]:
             raise ValueError(f"잘못된 spawn range입니다: x_range={x_range}, y_range={y_range}")
 
-        specs = {}
-        placed_xy = []
-        # Shuffle placement order so one color is not systematically favored.
-        placement_order = list(colors)
-        rng.shuffle(placement_order)
+        radius = float(sum(y_range) / 2.0)
+        max_abs_x = float(min(abs(x_range[0]), abs(x_range[1])))
+        if radius <= 0.0 or max_abs_x <= 0.0:
+            raise ValueError(f"원호 배치를 만들 수 없는 spawn range입니다: x_range={x_range}, y_range={y_range}")
 
-        for color in placement_order:
+        angle_limit = float(min(0.55, math.asin(min(0.99, max_abs_x / radius))))
+        if len(colors) > 1:
+            arc_spacing = 2.0 * radius * math.sin(angle_limit / float(len(colors) - 1))
+            if arc_spacing < min_distance:
+                raise ValueError(
+                    f"원호 배치 간격이 너무 좁습니다: arc_spacing={arc_spacing:.3f}, "
+                    f"min_distance={min_distance}, x_range={x_range}, y_range={y_range}"
+                )
+            arc_angles = np.linspace(-angle_limit, angle_limit, len(colors))
+        else:
+            arc_angles = np.array([0.0])
+
+        lane_order = list(range(len(colors)))
+        rng.shuffle(lane_order)
+        specs = {}
+        for color, lane_idx in zip(colors, lane_order):
             if color not in cls.CYLINDER_BODY_BY_COLOR:
                 raise ValueError(f"지원하지 않는 색상입니다: {color}")
 
-            for _ in range(max_tries):
-                x = float(rng.uniform(x_range[0], x_range[1]))
-                y = float(rng.uniform(y_range[0], y_range[1]))
-                xy = np.array([x, y], dtype=np.float64)
+            angle = float(arc_angles[lane_idx])
+            x = float(radius * math.sin(angle))
+            y = float(radius * math.cos(angle))
 
-                if all(np.linalg.norm(xy - other_xy) >= min_distance for other_xy in placed_xy):
-                    specs[color] = {
-                        "body_name": cls.CYLINDER_BODY_BY_COLOR[color],
-                        "x": x,
-                        "y": y,
-                        "yaw": float(rng.uniform(yaw_range[0], yaw_range[1])),
-                    }
-                    placed_xy.append(xy)
-                    break
-            else:
-                raise RuntimeError(
-                    "색상 cylinder 4개를 겹치지 않게 배치하지 못했습니다. "
-                    f"x_range={x_range}, y_range={y_range}, min_distance={min_distance}를 확인하세요."
-                )
+            specs[color] = {
+                "body_name": cls.CYLINDER_BODY_BY_COLOR[color],
+                "x": x,
+                "y": y,
+                "yaw": float(rng.uniform(yaw_range[0], yaw_range[1])),
+            }
+
+        xy_values = np.array([[spec["x"], spec["y"]] for spec in specs.values()], dtype=np.float64)
+        for i in range(len(xy_values)):
+            for j in range(i + 1, len(xy_values)):
+                dist = float(np.linalg.norm(xy_values[i] - xy_values[j]))
+                if dist < min_distance:
+                    raise ValueError(
+                        f"원호 배치 후 물체 간격이 너무 좁습니다: distance={dist:.3f}, "
+                        f"min_distance={min_distance}"
+                    )
 
         # Return in canonical color order for stable metadata.
         return {color: specs[color] for color in colors}
+
+    @classmethod
+    def arc_lane_xy(cls, lane_index, lane_count=5, x_range=None, y_range=None):
+        """Return a fixed front-arc lane position. lane_index is 1-based, left to right."""
+        x_range = x_range or cls.DEFAULT_OBJECT_X_RANGE
+        y_range = y_range or cls.DEFAULT_OBJECT_Y_RANGE
+        lane_index = int(lane_index)
+        lane_count = int(lane_count)
+        if lane_count < 1:
+            raise ValueError("lane_count는 1 이상이어야 합니다.")
+        if lane_index < 1 or lane_index > lane_count:
+            raise ValueError(f"lane_index는 1~{lane_count} 범위여야 합니다: {lane_index}")
+
+        radius = float(sum(y_range) / 2.0)
+        max_abs_x = float(min(abs(x_range[0]), abs(x_range[1])))
+        angle_limit = float(min(0.55, math.asin(min(0.99, max_abs_x / radius))))
+        arc_angles = np.linspace(-angle_limit, angle_limit, lane_count) if lane_count > 1 else np.array([0.0])
+        angle = float(arc_angles[lane_index - 1])
+        return float(radius * math.sin(angle)), float(radius * math.cos(angle))
+
+    @classmethod
+    def fixed_lane_object_specs(
+        cls,
+        rng,
+        lane_by_color,
+        lane_count=5,
+        x_range=None,
+        y_range=None,
+        yaw_range=(-np.pi / 4, np.pi / 4),
+    ):
+        specs = {}
+        for color, lane_index in lane_by_color.items():
+            if color not in cls.CYLINDER_BODY_BY_COLOR:
+                raise ValueError(f"지원하지 않는 색상입니다: {color}")
+            x, y = cls.arc_lane_xy(
+                lane_index=lane_index,
+                lane_count=lane_count,
+                x_range=x_range,
+                y_range=y_range,
+            )
+            specs[color] = {
+                "body_name": cls.CYLINDER_BODY_BY_COLOR[color],
+                "x": x,
+                "y": y,
+                "yaw": float(rng.uniform(yaw_range[0], yaw_range[1])),
+            }
+        return specs
 
     @staticmethod
     def specs_to_meta(object_specs):
@@ -531,6 +622,22 @@ class SyncSimRaccoonDataset:
             raise ValueError(f"target_color={target_color}가 object_specs에 없습니다.")
 
         self.active_object_body_name = object_specs[target_color]["body_name"]
+
+        hidden_idx = 0
+        for color, body_name in self.CYLINDER_BODY_BY_COLOR.items():
+            if color in object_specs:
+                continue
+            body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id == -1:
+                continue
+            self.reset_object_pose(
+                body_name,
+                x=0.45,
+                y=-0.35 - 0.04 * hidden_idx,
+                z=0.02,
+                yaw=0.0,
+            )
+            hidden_idx += 1
 
         for color, spec in object_specs.items():
             body_name = spec["body_name"]
@@ -655,6 +762,51 @@ class SyncSimRaccoonDataset:
             and self.is_body_touching_robot(target_body_name)
         )
 
+    def is_target_lift_success(
+        self,
+        target_body_name,
+        initial_object_z,
+        lift_height=0.05,
+        min_lift_ratio=0.6,
+        touch_threshold=0.1,
+    ):
+        object_pose = self.get_object_pose(target_body_name)
+        lifted_enough = float(object_pose[2]) >= float(initial_object_z) + float(lift_height) * float(min_lift_ratio)
+        return bool(
+            lifted_enough
+            and self.is_target_grasp_success(
+                target_body_name=target_body_name,
+                touch_threshold=touch_threshold,
+            )
+        )
+
+    def is_target_place_success(
+        self,
+        target_body_name,
+        place_body_name,
+        xy_threshold=0.035,
+        min_height_above=0.012,
+    ):
+        target_pose = self.get_object_pose(target_body_name)
+        place_pose = self.get_object_pose(place_body_name)
+        xy_close = float(np.linalg.norm(target_pose[:2] - place_pose[:2])) <= float(xy_threshold)
+        above_place_object = float(target_pose[2]) >= float(place_pose[2]) + float(min_height_above)
+        gripper_is_open = float(self.data.qpos[4]) > (self.GRIP_OPEN - 0.03)
+        return bool(xy_close and above_place_object and gripper_is_open)
+
+    def is_target_place_location_success(
+        self,
+        target_body_name,
+        place_xy,
+        xy_threshold=0.035,
+        max_resting_z=0.030,
+    ):
+        target_pose = self.get_object_pose(target_body_name)
+        xy_close = float(np.linalg.norm(target_pose[:2] - np.asarray(place_xy, dtype=np.float64))) <= float(xy_threshold)
+        resting_low = float(target_pose[2]) <= float(max_resting_z)
+        gripper_is_open = float(self.data.qpos[4]) > (self.GRIP_OPEN - 0.03)
+        return bool(xy_close and resting_low and gripper_is_open)
+
     def close(self):
         if self.viewer is not None:
             self.viewer.close()
@@ -662,15 +814,192 @@ class SyncSimRaccoonDataset:
 
     # ---------- grasp-only plan ----------
 
-    def make_grasp_plan(self, box_x, box_y):
+    @staticmethod
+    def grasp_z_for_color(target_color):
+        # The cube tends to be held more securely when the gripper closes a bit
+        # lower on the body instead of near the top edge.
+        return 0.018 if target_color == "white" else 0.020
+
+    @staticmethod
+    def _minimum_jerk(t):
+        t = float(np.clip(t, 0.0, 1.0))
+        return 10.0 * t**3 - 15.0 * t**4 + 6.0 * t**5
+
+    @staticmethod
+    def _action_xyz(action):
+        return np.array([float(action[0]), float(action[1]), float(action[2])], dtype=np.float64)
+
+    @staticmethod
+    def _action_gripper(action):
+        return float(action[-1])
+
+    @classmethod
+    def interpolate_plan(cls, plan, max_cartesian_step=0.008, min_segment_steps=2):
+        """
+        Densify Cartesian waypoint plans with minimum-jerk interpolation.
+
+        Open/close waypoints are kept discrete. Move waypoints are split into
+        small Cartesian targets so the logged EE deltas are smoother and less
+        dominated by slow/fast transients near the object.
+        """
+        if not plan:
+            return plan
+
+        interpolated = [plan[0]]
+        for start, end in zip(plan[:-1], plan[1:]):
+            start_gripper = cls._action_gripper(start)
+            end_gripper = cls._action_gripper(end)
+            start_xyz = cls._action_xyz(start)
+            end_xyz = cls._action_xyz(end)
+            distance = float(np.linalg.norm(end_xyz - start_xyz))
+
+            gripper_changes = abs(end_gripper - start_gripper) >= 0.5
+            if gripper_changes or distance <= 1e-6:
+                interpolated.append(end)
+                continue
+
+            steps = max(int(min_segment_steps), int(math.ceil(distance / float(max_cartesian_step))))
+            for step_idx in range(1, steps + 1):
+                alpha = cls._minimum_jerk(step_idx / float(steps))
+                xyz = start_xyz + (end_xyz - start_xyz) * alpha
+
+                # Preserve pitch only for segments where both endpoints carry it.
+                if len(start) >= 5 and len(end) >= 5:
+                    pitch = float(start[3]) + (float(end[3]) - float(start[3])) * alpha
+                    interp_action = [float(xyz[0]), float(xyz[1]), float(xyz[2]), pitch, end_gripper]
+                elif len(end) >= 5:
+                    interp_action = [float(xyz[0]), float(xyz[1]), float(xyz[2]), float(end[3]), end_gripper]
+                else:
+                    interp_action = [float(xyz[0]), float(xyz[1]), float(xyz[2]), end_gripper]
+                interpolated.append(interp_action)
+
+        return interpolated
+
+    def make_grasp_plan(self, box_x, box_y, target_color=None):
         z_above = 0.10
-        z_grasp = 0.02
+        z_grasp = self.grasp_z_for_color(target_color)
+        pitch_grasp = 0.0
 
         return [
-            [box_x, box_y, z_above, 0],   # Move above object with gripper open.
-            [box_x, box_y, z_grasp, 0],   # Move down to grasp height.
-            [box_x, box_y, z_grasp, 1],   # Close gripper and finish once the object is grasped.
+            [box_x, box_y, z_above, 0],                # Move above object without forcing pitch.
+            [box_x, box_y, z_grasp, pitch_grasp, 0],   # Move down to grasp height.
+            [box_x, box_y, z_grasp, pitch_grasp, 1],   # Close gripper and finish once grasped.
         ]
+
+    def make_lift_plan(self, box_x, box_y, lift_height=0.05, target_color=None):
+        z_above = 0.10
+        z_grasp = self.grasp_z_for_color(target_color)
+        z_lift = min(z_above, z_grasp + float(lift_height))
+        pitch_grasp = 0.0
+
+        return [
+            [box_x, box_y, z_above, 0],                # Move above object without forcing pitch.
+            [box_x, box_y, z_grasp, pitch_grasp, 0],   # Move down to grasp height.
+            [box_x, box_y, z_grasp, pitch_grasp, 1],   # Close gripper on the object.
+            [box_x, box_y, z_lift, pitch_grasp, 1],    # Lift first while staying horizontal to avoid floor contact.
+            [box_x, box_y, z_lift, 1],                 # Hold lifted object without forcing a new pitch target.
+        ]
+
+    def make_post_grasp_lift_plans(self, box_x, box_y, lift_height=0.05, target_color=None):
+        z_above = 0.10
+        z_grasp = self.grasp_z_for_color(target_color)
+        z_lift = min(z_above, z_grasp + float(lift_height))
+        pitch_grasp = 0.0
+
+        pre_grasp_plan = [
+            [box_x, box_y, z_above, 0],
+            [box_x, box_y, z_grasp, pitch_grasp, 0],
+            [box_x, box_y, z_grasp, pitch_grasp, 1],
+        ]
+        logged_lift_plan = [
+            [box_x, box_y, z_lift, pitch_grasp, 1],
+            [box_x, box_y, z_lift, 1],
+            [box_x, box_y, z_lift, 1],
+        ]
+        return pre_grasp_plan, logged_lift_plan
+
+    def make_pick_place_plan(self, pick_x, pick_y, place_x, place_y, lift_height=0.05, target_color=None):
+        z_above = 0.10
+        z_grasp = self.grasp_z_for_color(target_color)
+        z_lift = min(z_above, z_grasp + float(lift_height))
+        z_place = 0.040
+        pitch_grasp = 0.0
+
+        return [
+            [pick_x, pick_y, z_above, 0],                  # Approach source without forcing pitch.
+            [pick_x, pick_y, z_grasp, pitch_grasp, 0],     # Move down with gripper horizontal.
+            [pick_x, pick_y, z_grasp, pitch_grasp, 1],     # Close on source object.
+            [pick_x, pick_y, z_lift, pitch_grasp, 1],      # Lift source while staying horizontal.
+            [place_x, place_y, z_lift, pitch_grasp, 1],    # Carry with stable horizontal pitch.
+            [place_x, place_y, z_place, pitch_grasp, 1],   # Lower onto place target while horizontal.
+            [place_x, place_y, z_place, pitch_grasp, 0],   # Open gripper to release.
+            [place_x, place_y, z_lift, pitch_grasp, 0],    # Retreat upward while keeping wrist stable.
+        ]
+
+    def make_pick_place_location_plan(self, pick_x, pick_y, place_x, place_y, lift_height=0.05, target_color=None):
+        z_above = 0.10
+        z_grasp = self.grasp_z_for_color(target_color)
+        z_lift = min(z_above, z_grasp + float(lift_height))
+        pitch_grasp = 0.0
+
+        return [
+            [pick_x, pick_y, z_above, 0],
+            [pick_x, pick_y, z_grasp, pitch_grasp, 0],
+            [pick_x, pick_y, z_grasp, pitch_grasp, 1],
+            [pick_x, pick_y, z_lift, pitch_grasp, 1],
+            [place_x, place_y, z_lift, pitch_grasp, 1],
+            [place_x, place_y, z_grasp, pitch_grasp, 1],
+            [place_x, place_y, z_grasp, pitch_grasp, 0],
+            [place_x, place_y, z_lift, pitch_grasp, 0],
+        ]
+
+    def make_pick_place_location_stage_plans(
+        self,
+        stage,
+        pick_x,
+        pick_y,
+        place_x,
+        place_y,
+        lift_height=0.05,
+        target_color=None,
+    ):
+        z_above = 0.10
+        z_grasp = self.grasp_z_for_color(target_color)
+        z_lift = min(z_above, z_grasp + float(lift_height))
+        pitch_grasp = 0.0
+
+        approach_and_grasp = [
+            [pick_x, pick_y, z_above, 0],
+            [pick_x, pick_y, z_grasp, pitch_grasp, 0],
+            [pick_x, pick_y, z_grasp, pitch_grasp, 1],
+        ]
+        lift = [
+            [pick_x, pick_y, z_lift, pitch_grasp, 1],
+            [pick_x, pick_y, z_lift, pitch_grasp, 1],
+        ]
+        move_above_place = [
+            [place_x, place_y, z_lift, pitch_grasp, 1],
+        ]
+        lower_to_place = [
+            [place_x, place_y, z_grasp, pitch_grasp, 1],
+            [place_x, place_y, z_grasp, pitch_grasp, 1],
+        ]
+        release = [
+            [place_x, place_y, z_grasp, pitch_grasp, 0],
+        ]
+        retreat = [
+            [place_x, place_y, z_lift, pitch_grasp, 0],
+        ]
+
+        if stage == "post_grasp_lift":
+            return approach_and_grasp, lift
+        if stage == "post_lift_move":
+            return approach_and_grasp + lift, move_above_place
+        if stage == "post_move_lower":
+            return approach_and_grasp + lift + move_above_place, lower_to_place
+        if stage == "post_place_retreat":
+            return approach_and_grasp + lift + move_above_place + lower_to_place + release, retreat
+        raise ValueError(f"지원하지 않는 pick_place_location stage입니다: {stage}")
 
 
 def run_episode_and_record(
@@ -680,12 +1009,28 @@ def run_episode_and_record(
     instruction: str,
     object_specs: dict,
     target_color: str = "red",
+    place_color: str = None,
+    place_xy=None,
+    task_type: str = "grasp",
+    lift_height: float = 0.05,
     speed: int = 70,
     settle_seconds_per_action: float = 2.0,
+    interpolated_settle_seconds_per_action: float = 0.12,
     initial_settle_seconds: float = 0.3,
     hz: int = 10,
     touch_threshold: float = 0.1,
+    interpolate_motion: bool = False,
+    interpolation_max_step: float = 0.008,
+    interpolation_min_segment_steps: int = 2,
 ):
+    pick_place_location_stages = {
+        "pick_place_location_post_grasp_lift": "post_grasp_lift",
+        "pick_place_location_post_lift_move": "post_lift_move",
+        "pick_place_location_post_move_lower": "post_move_lower",
+        "pick_place_location_post_place_retreat": "post_place_retreat",
+    }
+    is_pick_place_location_task = task_type == "pick_place_location" or task_type in pick_place_location_stages
+
     if target_color not in object_specs:
         raise ValueError(f"target_color={target_color}가 object_specs에 없습니다.")
 
@@ -694,44 +1039,171 @@ def run_episode_and_record(
     target_x = float(target_spec["x"])
     target_y = float(target_spec["y"])
     target_yaw = float(target_spec["yaw"])
+    place_spec = None
+    place_body_name = None
+    place_x = target_x
+    place_y = target_y
+
+    if task_type == "pick_place":
+        if place_color is None:
+            raise ValueError("pick_place task에는 place_color가 필요합니다.")
+        if place_color == target_color:
+            raise ValueError("pick_place task에서 target_color와 place_color는 달라야 합니다.")
+        if place_color not in object_specs:
+            raise ValueError(f"place_color={place_color}가 object_specs에 없습니다.")
+        place_spec = object_specs[place_color]
+        place_body_name = place_spec["body_name"]
+        place_x = float(place_spec["x"])
+        place_y = float(place_spec["y"])
+    elif is_pick_place_location_task:
+        if place_xy is None:
+            raise ValueError(f"{task_type} task에는 place_xy가 필요합니다.")
+        place_x = float(place_xy[0])
+        place_y = float(place_xy[1])
 
     rc.reset_episode(object_specs=object_specs, target_color=target_color)
-    rc.lockh()
+    rc.unlock()
 
     # Let newly reset free-joint cylinders fall/settle before capturing frame_000000.
     # Without this, the first saved image can show cylinders slightly floating while
     # later frames look normal after one physics step.
     if initial_settle_seconds > 0:
         rc.settle_steps(seconds=initial_settle_seconds)
+    initial_object_z = float(rc.get_object_pose(target_body_name)[2])
+
+    if task_type == "post_grasp_lift":
+        pre_grasp_plan, plan = rc.make_post_grasp_lift_plans(
+            target_x,
+            target_y,
+            lift_height=lift_height,
+            target_color=target_color,
+        )
+        if interpolate_motion:
+            pre_grasp_plan = rc.interpolate_plan(
+                pre_grasp_plan,
+                max_cartesian_step=interpolation_max_step,
+                min_segment_steps=interpolation_min_segment_steps,
+            )
+            plan = rc.interpolate_plan(
+                plan,
+                max_cartesian_step=interpolation_max_step,
+                min_segment_steps=interpolation_min_segment_steps,
+            )
+
+        try:
+            for action in pre_grasp_plan:
+                rc.execute_action(action, speed=speed)
+                rc.settle_steps(
+                    seconds=interpolated_settle_seconds_per_action if interpolate_motion else settle_seconds_per_action
+                )
+
+            if not rc.is_target_grasp_success(
+                target_body_name=target_body_name,
+                touch_threshold=touch_threshold,
+            ):
+                return False
+        except Exception as e:
+            logger.abort_episode()
+            raise e
+    elif task_type in pick_place_location_stages:
+        precondition_plan, plan = rc.make_pick_place_location_stage_plans(
+            stage=pick_place_location_stages[task_type],
+            pick_x=target_x,
+            pick_y=target_y,
+            place_x=place_x,
+            place_y=place_y,
+            lift_height=lift_height,
+            target_color=target_color,
+        )
+        if interpolate_motion:
+            precondition_plan = rc.interpolate_plan(
+                precondition_plan,
+                max_cartesian_step=interpolation_max_step,
+                min_segment_steps=interpolation_min_segment_steps,
+            )
+            plan = rc.interpolate_plan(
+                plan,
+                max_cartesian_step=interpolation_max_step,
+                min_segment_steps=interpolation_min_segment_steps,
+            )
+
+        try:
+            for action in precondition_plan:
+                rc.execute_action(action, speed=speed)
+                rc.settle_steps(
+                    seconds=interpolated_settle_seconds_per_action if interpolate_motion else settle_seconds_per_action
+                )
+        except Exception as e:
+            logger.abort_episode()
+            raise e
 
     logger.start_episode(
         episode_id=episode_id,
         instruction=instruction,
-        task_type="grasp",
-        goal_xy=[target_x, target_y],
+        task_type=task_type,
+        goal_xy=[place_x, place_y],
         box_init_xy=[target_x, target_y],
         box_init_yaw=target_yaw,
         target_color=target_color,
         target_body_name=target_body_name,
+        place_color=place_color,
+        place_body_name=place_body_name,
         all_object_init_poses=SyncSimRaccoonDataset.specs_to_meta(object_specs),
     )
 
     try:
-        # The prompt decides which cylinder to grasp. All four cylinders are
-        # visible, but the trajectory is aimed only at the prompted color.
-        plan = rc.make_grasp_plan(target_x, target_y)
+        # The prompt decides which object to manipulate. All objects are visible,
+        # but the trajectory is aimed only at the prompted target.
+        if task_type == "grasp":
+            plan = rc.make_grasp_plan(target_x, target_y, target_color=target_color)
+        elif task_type == "lift":
+            plan = rc.make_lift_plan(target_x, target_y, lift_height=lift_height, target_color=target_color)
+        elif task_type == "post_grasp_lift":
+            pass
+        elif task_type == "pick_place":
+            plan = rc.make_pick_place_plan(
+                pick_x=target_x,
+                pick_y=target_y,
+                place_x=place_x,
+                place_y=place_y,
+                lift_height=lift_height,
+                target_color=target_color,
+            )
+        elif task_type == "pick_place_location":
+            plan = rc.make_pick_place_location_plan(
+                pick_x=target_x,
+                pick_y=target_y,
+                place_x=place_x,
+                place_y=place_y,
+                lift_height=lift_height,
+                target_color=target_color,
+            )
+        elif task_type in pick_place_location_stages:
+            pass
+        else:
+            raise ValueError(f"지원하지 않는 task_type입니다: {task_type}")
+
+        if interpolate_motion and task_type not in ("post_grasp_lift", *pick_place_location_stages.keys()):
+            plan = rc.interpolate_plan(
+                plan,
+                max_cartesian_step=interpolation_max_step,
+                min_segment_steps=interpolation_min_segment_steps,
+            )
 
         # Initial observation.
         obs = rc.get_observation()
         dt = 1.0 / hz
         step_counter = 0
+        action_settle_seconds = (
+            interpolated_settle_seconds_per_action if interpolate_motion else settle_seconds_per_action
+        )
 
         for action in plan:
             # Set control target to current waypoint.
             rc.execute_action(action, speed=speed)
 
             # Capture continuous observations at specified Hz while moving toward the target.
-            num_frames = int(settle_seconds_per_action * hz)
+            num_frames = max(1, int(action_settle_seconds * hz))
 
             for _ in range(num_frames):
                 logger.log_step(
@@ -766,10 +1238,58 @@ def run_episode_and_record(
             is_last=True,
         )
 
-        success = rc.is_target_grasp_success(
-            target_body_name=target_body_name,
-            touch_threshold=touch_threshold,
-        )
+        if task_type in ("lift", "post_grasp_lift"):
+            success = rc.is_target_lift_success(
+                target_body_name=target_body_name,
+                initial_object_z=initial_object_z,
+                lift_height=lift_height,
+                touch_threshold=touch_threshold,
+            )
+        elif task_type == "pick_place":
+            success = rc.is_target_place_success(
+                target_body_name=target_body_name,
+                place_body_name=place_body_name,
+            )
+        elif task_type == "pick_place_location":
+            success = rc.is_target_place_location_success(
+                target_body_name=target_body_name,
+                place_xy=[place_x, place_y],
+            )
+        elif task_type == "pick_place_location_post_grasp_lift":
+            success = rc.is_target_lift_success(
+                target_body_name=target_body_name,
+                initial_object_z=initial_object_z,
+                lift_height=lift_height,
+                touch_threshold=touch_threshold,
+            )
+        elif task_type == "pick_place_location_post_lift_move":
+            target_pose = rc.get_object_pose(target_body_name)
+            xy_close = float(np.linalg.norm(target_pose[:2] - np.asarray([place_x, place_y], dtype=np.float64))) <= 0.035
+            success = bool(
+                xy_close
+                and rc.is_target_lift_success(
+                    target_body_name=target_body_name,
+                    initial_object_z=initial_object_z,
+                    lift_height=lift_height,
+                    touch_threshold=touch_threshold,
+                )
+            )
+        elif task_type == "pick_place_location_post_move_lower":
+            target_pose = rc.get_object_pose(target_body_name)
+            xy_close = float(np.linalg.norm(target_pose[:2] - np.asarray([place_x, place_y], dtype=np.float64))) <= 0.035
+            low_enough = float(target_pose[2]) <= 0.045
+            gripper_is_closing_or_closed = float(rc.data.qpos[4]) < (rc.GRIP_OPEN - 0.03)
+            success = bool(xy_close and low_enough and gripper_is_closing_or_closed)
+        elif task_type == "pick_place_location_post_place_retreat":
+            success = rc.is_target_place_location_success(
+                target_body_name=target_body_name,
+                place_xy=[place_x, place_y],
+            )
+        else:
+            success = rc.is_target_grasp_success(
+                target_body_name=target_body_name,
+                touch_threshold=touch_threshold,
+            )
         logger.finalize_episode(success=success)
         return success
 
@@ -778,64 +1298,130 @@ def run_episode_and_record(
         raise e
 
 
-def _balanced_target_counts(num_episodes, colors):
+def _balanced_target_counts(num_episodes, items):
     """
     Return per-color episode targets. If num_episodes is divisible by the
-    number of colors, the split is exactly equal. Otherwise the remainder is
-    distributed one-by-one to the first colors.
+    number of items, the split is exactly equal. Otherwise the remainder is
+    distributed one-by-one to the first items.
     """
-    base = num_episodes // len(colors)
-    remainder = num_episodes % len(colors)
+    base = num_episodes // len(items)
+    remainder = num_episodes % len(items)
     return {
-        color: base + (1 if idx < remainder else 0)
-        for idx, color in enumerate(colors)
+        item: base + (1 if idx < remainder else 0)
+        for idx, item in enumerate(items)
     }
 
 
-def _sample_remaining_color(rng, target_counts, success_counts):
-    remaining_colors = []
+def _sample_remaining_item(rng, target_counts, success_counts):
+    remaining_items = []
     remaining_weights = []
 
-    for color, target_count in target_counts.items():
-        remaining = target_count - success_counts[color]
+    for item, target_count in target_counts.items():
+        remaining = target_count - success_counts[item]
         if remaining > 0:
-            remaining_colors.append(color)
+            remaining_items.append(item)
             remaining_weights.append(remaining)
 
-    if not remaining_colors:
+    if not remaining_items:
         return None
 
     remaining_weights = np.asarray(remaining_weights, dtype=np.float64)
     remaining_weights /= remaining_weights.sum()
-    return str(rng.choice(remaining_colors, p=remaining_weights))
+    choice_idx = int(rng.choice(len(remaining_items), p=remaining_weights))
+    return remaining_items[choice_idx]
+
+
+def make_object_phrase(target_color):
+    if target_color == "white":
+        return "white cube"
+    return f"{target_color} cylinder"
+
+
+def make_instruction(target_color, task_type, cylinder_instruction_template, place_color=None):
+    if task_type == "pick_place":
+        if place_color is None:
+            raise ValueError("pick_place instruction에는 place_color가 필요합니다.")
+        return f"pick the {make_object_phrase(target_color)} and place it on the {make_object_phrase(place_color)}"
+    if task_type in (
+        "pick_place_location",
+        "pick_place_location_post_grasp_lift",
+        "pick_place_location_post_lift_move",
+        "pick_place_location_post_move_lower",
+        "pick_place_location_post_place_retreat",
+    ):
+        return f"pick the {make_object_phrase(target_color)} and place it at position four"
+    if task_type in ("lift", "post_grasp_lift"):
+        return f"lift the {make_object_phrase(target_color)}"
+    if target_color == "white":
+        return "grasp the white cube"
+    return cylinder_instruction_template.format(color=target_color)
+
+
+def build_target_items(task_types, colors, pick_place_pairs=None):
+    items = []
+    for task_type in task_types:
+        if task_type == "pick_place":
+            if pick_place_pairs is None:
+                items.extend(
+                    (task_type, target_color, place_color)
+                    for target_color in colors
+                    for place_color in colors
+                    if place_color != target_color
+                )
+            else:
+                items.extend(
+                    (task_type, target_color, place_color)
+                    for target_color, place_color in pick_place_pairs
+                )
+        elif task_type in (
+            "pick_place_location",
+            "pick_place_location_post_grasp_lift",
+            "pick_place_location_post_lift_move",
+            "pick_place_location_post_move_lower",
+            "pick_place_location_post_place_retreat",
+        ):
+            items.extend((task_type, target_color, None) for target_color in colors)
+        else:
+            items.extend((task_type, target_color, None) for target_color in colors)
+    return tuple(items)
 
 
 def collect_dataset(
     xml_path="Raccoon_colored_cylinder.xml",
-    dataset_root="raccoon_grasp_colored_cylinder",
+    dataset_root="raccoon_grasp_lift_colored_objects",
     num_episodes=100,
-    colors=("red", "blue", "green", "yellow"),
+    colors=("red", "blue", "green", "yellow", "white"),
+    task_types=("grasp", "lift"),
     instruction_template="grasp the {color} cylinder",
+    lift_height=0.05,
     keep_failed=False,
     use_viewer=False,
     camera_name="front_view",
     speed=150,
     settle_seconds_per_action=0.8,
+    interpolated_settle_seconds_per_action=0.12,
     initial_settle_seconds=0.3,
     hz=10,
     touch_threshold=0.1,
     seed=None,
     max_attempts=None,
-    object_x_range=(-0.10, 0.10),
-    object_y_range=(0.16, 0.20),
-    min_object_distance=0.035,
+    object_x_range=None,
+    object_y_range=None,
+    min_object_distance=None,
+    interpolate_motion=False,
+    interpolation_max_step=0.008,
+    interpolation_min_segment_steps=2,
+    pick_place_pairs=None,
+    fixed_object_lanes=None,
+    fixed_place_lane=None,
+    fixed_lane_count=5,
 ):
     """
-    Collect a balanced grasp dataset for colored cylinders.
+    Collect a balanced grasp/lift/pick_place dataset for colored cylinders and the white cube.
 
     Each episode contains all four colored cylinders at randomized positions.
-    The instruction selects which colored cylinder is the target, and the robot
-    executes the grasp plan toward that target color only.
+    The instruction selects which object is the target, and task_type selects
+    whether the robot grasps it, lifts it, or places it on another object.
 
     Default behavior with keep_failed=False:
     - Saves exactly num_episodes successful episodes when possible.
@@ -845,14 +1431,16 @@ def collect_dataset(
     - Before frame_000000 is captured, the scene is stepped for
       initial_settle_seconds so free-joint cylinders are already resting on the table.
 
-    Position defaults are constrained relative to the old single-object range:
-    - old x range: -0.18~0.18  ->  new x range: -0.10~0.10
-    - old y range:  0.10~0.18  ->  new y range:  0.16~0.20
+    Position defaults place objects on a reachable front arc:
+    - x range: -0.11~0.11
+    - y range:  0.19~0.21
+    - minimum spacing: 0.045
 
     If keep_failed=True, failed episodes are also saved, so the final folder can
     contain more than num_episodes attempts and the all-attempt ratio may differ.
     """
     colors = tuple(colors)
+    task_types = tuple(task_types)
     valid_colors = set(SyncSimRaccoonDataset.CYLINDER_BODY_BY_COLOR.keys())
     unknown_colors = [color for color in colors if color not in valid_colors]
     if unknown_colors:
@@ -860,8 +1448,35 @@ def collect_dataset(
 
     if len(colors) == 0:
         raise ValueError("colors는 비어 있을 수 없습니다.")
+    if pick_place_pairs is not None:
+        pick_place_pairs = tuple((str(src), str(dst)) for src, dst in pick_place_pairs)
+        for src, dst in pick_place_pairs:
+            if src == dst:
+                raise ValueError(f"pick_place pair의 source/place가 같습니다: {(src, dst)}")
+            if src not in valid_colors or dst not in valid_colors:
+                raise ValueError(
+                    f"지원하지 않는 pick_place pair입니다: {(src, dst)}. "
+                    f"지원 색상: {sorted(valid_colors)}"
+                )
+    valid_task_types = {
+        "grasp",
+        "lift",
+        "post_grasp_lift",
+        "pick_place",
+        "pick_place_location",
+        "pick_place_location_post_grasp_lift",
+        "pick_place_location_post_lift_move",
+        "pick_place_location_post_move_lower",
+        "pick_place_location_post_place_retreat",
+    }
+    unknown_task_types = [task_type for task_type in task_types if task_type not in valid_task_types]
+    if unknown_task_types:
+        raise ValueError(f"지원하지 않는 task_type입니다: {unknown_task_types}. 지원 task: {sorted(valid_task_types)}")
+    if len(task_types) == 0:
+        raise ValueError("task_types는 비어 있을 수 없습니다.")
 
-    target_counts = _balanced_target_counts(num_episodes, colors)
+    target_items = build_target_items(task_types, colors, pick_place_pairs=pick_place_pairs)
+    target_counts = _balanced_target_counts(num_episodes, target_items)
     rng = np.random.default_rng(seed)
 
     if max_attempts is None:
@@ -876,27 +1491,59 @@ def collect_dataset(
     )
     logger = DatasetLogger(root_dir=dataset_root, keep_failed=keep_failed)
 
-    success_counts = {color: 0 for color in colors}
+    success_counts = {item: 0 for item in target_items}
     attempt_count = 0
 
-    print(f"Target color counts: {target_counts}")
+    print(f"Target task/object counts: {target_counts}")
 
     try:
         while sum(success_counts.values()) < num_episodes and attempt_count < max_attempts:
             attempt_count += 1
 
-            target_color = _sample_remaining_color(rng, target_counts, success_counts)
-            if target_color is None:
+            target_item = _sample_remaining_item(rng, target_counts, success_counts)
+            if target_item is None:
                 break
+            task_type, target_color, place_color = target_item
 
-            instruction = instruction_template.format(color=target_color)
-            object_specs = SyncSimRaccoonDataset.sample_object_specs(
-                rng=rng,
-                colors=colors,
-                x_range=object_x_range,
-                y_range=object_y_range,
-                min_distance=min_object_distance,
+            instruction = make_instruction(
+                target_color=target_color,
+                task_type=task_type,
+                cylinder_instruction_template=instruction_template,
+                place_color=place_color,
             )
+            if fixed_object_lanes is not None:
+                object_specs = SyncSimRaccoonDataset.fixed_lane_object_specs(
+                    rng=rng,
+                    lane_by_color=fixed_object_lanes,
+                    lane_count=fixed_lane_count,
+                    x_range=object_x_range,
+                    y_range=object_y_range,
+                )
+            else:
+                object_specs = SyncSimRaccoonDataset.sample_object_specs(
+                    rng=rng,
+                    colors=colors,
+                    x_range=object_x_range,
+                    y_range=object_y_range,
+                    min_distance=min_object_distance,
+                )
+
+            place_xy = None
+            if task_type in {
+                "pick_place_location",
+                "pick_place_location_post_grasp_lift",
+                "pick_place_location_post_lift_move",
+                "pick_place_location_post_move_lower",
+                "pick_place_location_post_place_retreat",
+            }:
+                if fixed_place_lane is None:
+                    raise ValueError(f"{task_type}에는 fixed_place_lane이 필요합니다.")
+                place_xy = SyncSimRaccoonDataset.arc_lane_xy(
+                    lane_index=fixed_place_lane,
+                    lane_count=fixed_lane_count,
+                    x_range=object_x_range,
+                    y_range=object_y_range,
+                )
 
             # With keep_failed=False, failed attempts are deleted, so reusing the
             # next successful episode id keeps folder numbering compact.
@@ -910,27 +1557,36 @@ def collect_dataset(
                     instruction=instruction,
                     object_specs=object_specs,
                     target_color=target_color,
+                    place_color=place_color,
+                    place_xy=place_xy,
+                    task_type=task_type,
+                    lift_height=lift_height,
                     speed=speed,
                     settle_seconds_per_action=settle_seconds_per_action,
+                    interpolated_settle_seconds_per_action=interpolated_settle_seconds_per_action,
                     initial_settle_seconds=initial_settle_seconds,
                     hz=hz,
                     touch_threshold=touch_threshold,
+                    interpolate_motion=interpolate_motion,
+                    interpolation_max_step=interpolation_max_step,
+                    interpolation_min_segment_steps=interpolation_min_segment_steps,
                 )
 
                 if success:
-                    success_counts[target_color] += 1
+                    success_counts[target_item] += 1
 
                 print(
                     f"[Attempt {attempt_count:04d}] episode_id={episode_id:06d} | "
-                    f"task_type='grasp' | color='{target_color}' | "
+                    f"task_type='{task_type}' | color='{target_color}' | "
+                    f"place_color='{place_color}' | "
                     f"target_xy=({object_specs[target_color]['x']:.3f}, {object_specs[target_color]['y']:.3f}) | "
                     f"instruction='{instruction}' | success={success} | "
                     f"success_counts={success_counts}"
                 )
             except Exception as e:
                 print(
-                    f"[Attempt {attempt_count:04d}] task_type='grasp' | "
-                    f"color='{target_color}' | exception: {e}"
+                    f"[Attempt {attempt_count:04d}] task_type='{task_type}' | "
+                    f"color='{target_color}' | place_color='{place_color}' | exception: {e}"
                 )
 
     finally:
@@ -938,7 +1594,7 @@ def collect_dataset(
 
     total_success = sum(success_counts.values())
     print(f"완료: success episodes = {total_success}/{num_episodes}, attempts = {attempt_count}")
-    print(f"색상별 성공 episode 수: {success_counts}")
+    print(f"task/object별 성공 episode 수: {success_counts}")
 
     if total_success < num_episodes:
         print(
@@ -950,15 +1606,17 @@ def collect_dataset(
 if __name__ == "__main__":
     collect_dataset(
         xml_path="Raccoon_colored_cylinder.xml",
-        dataset_root="raccoon_grasp_colored_cylinder",
-        num_episodes=400,
-        colors=("red", "blue", "green", "yellow"),
+        dataset_root="raccoon_grasp_lift_colored_objects",
+        num_episodes=10,
+        colors=("red", "blue", "green", "yellow", "white"),
+        task_types=("grasp", "lift"),
         instruction_template="grasp the {color} cylinder",
+        lift_height=0.05,
         keep_failed=False,
         use_viewer=False,
         camera_name="front_view",
         initial_settle_seconds=0.1,
-        object_x_range=(-0.10, 0.10),
-        object_y_range=(0.16, 0.25),
-        min_object_distance=0.035,
+        object_x_range=None,
+        object_y_range=None,
+        min_object_distance=None,
     )
