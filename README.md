@@ -183,8 +183,9 @@ for job in jobs:
     print(f"{root}: {count}")
 PY
 ```
-total: 8500개
-데이터셋 합치기
+total: 8500개<br>
+
+### 데이터셋 합치기<br>
 ```
 python - <<'PY'
 from pathlib import Path
@@ -221,4 +222,103 @@ for src in sources:
 
 print(f"merged {episode_id - 1} episodes into {out}")
 PY
+```
+### RLDS 형식으로 변환 후 build<br>
+변환하기<br>
+```
+cd /home/min/vla_lab/Raccoonbot_Openvla/Mujoco/raccoon_dataset
+
+python convert_raw_to_openvla_rlds_intermediate.py \
+  --raw_root /home/min/vla_lab/Raccoonbot_Openvla/Mujoco/raccoon_pitch_fixed_all_tasks_8500 \
+  --out_root /home/min/vla_lab/Raccoonbot_Openvla/Mujoco/raccoon_dataset/openvla_rlds_pitch_fixed_all_tasks_8500 \
+  --val_ratio 0.1
+```
+데이터셋 경로 <br>
+```
+INTERMEDIATE_ROOT = Path(
+    "/home/min/vla_lab/Raccoonbot_Openvla/Mujoco/raccoon_dataset/openvla_rlds_pitch_fixed_all_tasks_8500"
+)
+```
+build<br>
+```
+cd /home/min/vla_lab/Raccoonbot_Openvla/Mujoco/rlds_dataset_builder/raccoon_pick_place
+tfds build --overwrite
+```
+
+### train 하기(서버에서 진행)<br>
+총 11시간 32분 소요<br>
+```
+cd /data/Raccoonbot_Openvla/openvla
+
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=0 \
+torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
+  --vla_path openvla/openvla-7b \
+  --data_root_dir /data/Raccoonbot_Openvla/tensorflow_datasets_pitch_fixed_all_tasks_8500 \
+  --dataset_name raccoon_pick_place \
+  --run_root_dir /data/Raccoonbot_Openvla/openvla/openvla-runs \
+  --adapter_tmp_dir /data/Raccoonbot_Openvla/openvla/openvla-adapter-tmp \
+  --lora_rank 32 \
+  --batch_size 4 \
+  --grad_accumulation_steps 2 \
+  --learning_rate 5e-4 \
+  --max_steps 30000 \
+  --save_steps 10000 \
+  --run_id_note raccoon-all-tasks-8500
+```
+
+### inferenece<br>
+**서버 측**<br>
+```
+CUDA_VISIBLE_DEVICES=0 python openvla_server.py \
+  --model_path "/data/Raccoonbot_Openvla/openvla/openvla-runs/openvla-7b+raccoon_pick_place+b8+lr-0.0005+lora-r32+dropout-0.0--raccoon-all-tasks-8500--image_aug" \
+  --default-unnorm-key raccoon_pick_place \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --device cuda
+```
+
+**로컬 측**<br>
+grasp<br>
+```
+python openvla_multicolor_client.py \
+  --server_url http://127.0.0.1:8000 \
+  --xml_path Raccoon_colored_cylinder.xml \
+  --task_type grasp \
+  --target_color red \
+  --use_viewer \
+  --speed 180 \
+  --settle_seconds_per_action 0.12 \
+  --delta_scale 1.0 \
+  --max_delta_xyz 0.02 \
+  --max_steps 220 \
+```
+
+lift<br>
+```
+python openvla_multicolor_client.py \
+  --server_url http://127.0.0.1:8000 \
+  --xml_path Raccoon_colored_cylinder.xml \
+  --task_type lift \
+  --target_color red \
+  --use_viewer \
+  --speed 180 \
+  --settle_seconds_per_action 0.12 \
+  --delta_scale 1.4 \
+  --max_delta_xyz 0.02 \
+  --max_steps 300 \
+```
+
+pick and place<br>
+```
+python openvla_multicolor_client.py \
+  --server_url http://127.0.0.1:8000 \
+  --xml_path Raccoon_colored_cylinder.xml \
+  --task_type pick_place_location \
+  --target_color red \
+  --use_viewer \
+  --speed 180 \
+  --settle_seconds_per_action 0.12 \
+  --delta_scale 3.0 \
+  --max_delta_xyz 0.02 \
+  --max_steps 500
 ```
