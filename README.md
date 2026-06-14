@@ -362,11 +362,74 @@ pick and place<br>
 
 
 
-## 코드 개선
-### 7D-to-4DOF action mapping 개선
-### inference 또는 motion execution 속도 개선
-inference시 속도를 개선하기 
+## 코드 개선<br>
+### 7D-to-4DOF action mapping 개선<br>
+기존의 코드의 경우 action 구조는 다음과 같다.<br>
+```
+action = [dx, dy, dz, 0, 0, 0, gripper]
+```
+rotation을 전부 0으로 채워 방위값을 삭제하여 사용하였다. raccoonbot은 4DoF manipulator 이기에 pitch 값을 고려해줘야한다. 그래서 다음과 같이 수정하였다. <br>
+```
+action = [dx, dy, dz, 0, dpitch, 0, gripper]
+```
+이에 따라 ee_pose를 계산할 때도 pitch 값을 사용하도록 변경하고, RLDS 변환에서도 dpitch 계산하도록 하였다.<br>
+inference할 때도 4DoF를 사용하기 위해 target_pitch = current_pitch + dpitch 를 추가하였고, IK에서도 pitch를 맞추기 위해 joint4를 계산해주었다. th4 = target_pitch - th2 - th3 - 90도<br>
 
-### timing/action log 추가 또는 visualization 개선
+### inference 또는 motion execution 속도 개선<br>
+기존의 코드의 경우 inference 할 시 움직임이 거의 없다시피 할 정도로 미미하였다. 그래서 inference시 속도를 개선하기 위해 다음과 같은 기능을 추가하였다.<br>
+```
+--delta_scale
+--max_delta_xyz
+```
+delta_scale : 모델이 예측한 이동량을 몇 배로 키워서 적용할지 정하는 값<br>
+max_delta_xyz : 한번의 step에서 x, y, z 방향으로 움직일 수 있는 최대 거리 제한값 (단위 : m)<br>
+
+delta_scale를 통해서 모델이 예측한 이동량 키워 로봇에 적용함으로써 로봇의 움직임을 개선하였다. 하지만 이렇게 키워서 사용하면 로봇의 움직임이 강해져 잘못된 경로로 갈 수도 있기에 max_delta_xyz를 통해 한번 이동 시 제한 거리를 설정해주었다.<br>
+
+### timing/action log 추가 또는 visualization 개선<br>
+단순히 mujoco 화면만 띄우는게 아니라, ui를 제작하여 한눈에 보기 쉽게 만들었다. <br>
+오른쪽에는 mujoco 렌더링 화면을 띄웠다. 렌더링을 띄울 때 화질 개선을 위해 640 x 640의 이미지를 사용하였는데, 이렇게 변경하면서 모델의 inference input도 640로 변경하니 distribution mismatch로 로봇 동작이 제대로 이루어지지 않았다. 따라서 inference input은 기존 그대로 256 x 256 으로 고정하고 ui에 가져오는 화면만 640 x 640의 이미지로 가져왔다.
+<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/c8fdce64-0b28-4699-9f0b-b2341110bacd" />
+사용자 지시를 편리하게 하기 위해 task와 target color를 버튼으로 만들어 선택할 수 있도록 하였다. 선택한 것에 따라 아래 instruction 명령어가 자동 생성된다.<br>
+
+그 아래에는 현재의 상태를 실시간으로 보여주는 로그가 있다.<br>
+<img width="256" height="31" alt="image" src="https://github.com/user-attachments/assets/05e585cf-5049-4ff8-bcb0-7f88d551801e" />
+차례대로 [현재 step] [IK 결과] | [ee pose 변화량] | [ee 위치] | [gripper 상태] 이다.<br>
+
+그 아래에는 터미널 출력창을 보여주며 로봇의 전체적인 움직임을 수치값으로 확인할 수 있다<br>
+<img width="256" height="256" alt="image" src="https://github.com/user-attachments/assets/68c189f8-1449-4af2-b986-9b0ed440f171" />
+
+그 밑으로는 로봇이 현재 어떤 단계를 수행하고 있는지에 대한 상태값을 보여준다.<br>
+<img width="256" height="25" alt="image" src="https://github.com/user-attachments/assets/2cd54e20-28b8-4b84-97ed-372ac1d614c9" />
+로봇의 현재 action 변화값들을 통해 상태를 표시한다.<br>
+
+grasp : grasp<br>
+lift : grasp ->  lift<br>
+pick and place : grasp ->  lift -> move -> lower -> retreat<br>
+
+마지막으로는 동작을 실행하는 Run 버튼과 멈추는 Stop 버튼이 있다.<br>
+<img width="256" height="50" alt="image" src="https://github.com/user-attachments/assets/653f8b7b-9e82-4465-937e-93d74dff7ade" />
+위에서 동작 task를 선택한 후 Run 버튼을 눌러 실행시킨다. 실행을 멈추고 싶거나 다른 동작을 하고 싶으면 Stop을 누르고 다른 동작을 선택할 수 있다.<br>
+
+ui 기능을 사용하기 위해서 inference 코드에 use_ui를 추가하여 실행해주면 된다. <br>
+```
+python openvla_multicolor_client.py \
+  --server_url http://127.0.0.1:8000 \
+  --xml_path Raccoon_colored_cylinder.xml \
+  --task_type pick_place_location \
+  --target_color red \
+  --speed 180 \
+  --settle_seconds_per_action 0.12 \
+  --delta_scale 3.0 \
+  --max_delta_xyz 0.02 \
+  --max_steps 500 \
+  --use_ui
+```
+
+## 최종 코드 개선 목록<br>
+1. 7D-to-4DOF action mapping 개선 : pitch 값 추가하여 IK 등 로봇 작업 수행<br>
+2. inference 또는 motion execution 속도 개선 : 예측 action값 x n배 기능, step 당 최대 이동 거리<br>
+3. timing/action log 추가 또는 visualization 개선 : ui에 각종 기능 탑재<br>
+
 
 
