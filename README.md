@@ -438,6 +438,8 @@ https://youtu.be/3au7n5eJLlQ <br>
 2. inference 또는 motion execution 속도 개선 : 예측 action값 x n배 기능, step 당 최대 이동 거리<br>
 3. timing/action log 추가 또는 visualization 개선 : ui에 각종 기능 탑재<br>
 
+## Report.pdf
+[report_KimMinchae.pdf](https://github.com/user-attachments/files/28928983/report_KimMinchae.pdf)
 
 
 
